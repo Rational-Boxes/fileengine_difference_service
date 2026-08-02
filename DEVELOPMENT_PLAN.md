@@ -50,16 +50,23 @@ Each milestone is independently shippable and ends with `@live`-gated tests.
 - Idempotency (dedupe `event_id`; collapse `(file_uid, target_version)`).
 - **Version-pair resolution**: default target vs. immediate predecessor; optional
   explicit base.
-- **Hidden-child rendition writer** (gRPC) with `mode` metadata + cache key
+- **Hidden-child rendition writer** (gRPC): content children first, **`manifest`
+  written last as the atomic commit marker** (spec §7.1.1); cache key
   `(file_uid, base, target, plugin_name, plugin_version)`; regenerate on plugin
-  `version` bump.
+  `version` bump; a fully-failed run still writes a `status: "failed"` manifest.
 - **Reconcile sweep** — backfill missing / stale-plugin renditions.
 - Validated with a trivial pass-through plugin (no real diff yet).
 
 ### M2 — PDF (2D) plugin
+- **Core research spike (do first, highest risk): PDF object-matching key** — no
+  stable identity exists, so derive one: global page-alignment pass → position-
+  independent per-object signature → LCS over draw-op order (spec §5.1). Low
+  matcher confidence on a page must degrade it to the hybrid/raster tier rather
+  than emit a misleading diff. De-risks the rest of M2 before the SVG work.
 - Per-page degradation ladder: **vector object-level → text+raster hybrid →
   raster pixel overlay**, tier chosen per page.
-- Object-level matching of text runs / vector objects → `data-diff-state`.
+- Object-level matching of text runs / vector objects → `data-diff-state`, with the
+  per-tier **`modified` predicate** of spec §5.1.
 - **Full vectorization**: glyphs emitted as `<path>` outlines (no client fonts).
 - SVG three-layer contract (`#diff-old` / `#diff-new` / `#diff-changes`) +
   `data-diff-mode`; page correspondence tolerant of insert/delete/reorder.

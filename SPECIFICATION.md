@@ -110,6 +110,40 @@ Each page independently uses the highest-fidelity tier its content supports:
 Page correspondence must tolerate inserted / deleted / reordered pages (whole
 inserted pages are all-added, deleted pages all-deleted).
 
+**Object matching — the core research spike.** Unlike IFC (§5.2), a PDF has **no
+stable object identity**, so the tier-1 matcher must *derive* one. This is the
+highest-risk piece of the project and is called out as an explicit M2 spike (a
+naive matcher makes a one-line insertion re-flow every following object and the
+whole page reads "modified"). The intended algorithm:
+
+1. **Global page alignment first.** Detect a dominant translation/scale between the
+   two content streams (e.g. via the strongest cluster of object-offset votes)
+   and cancel it, so a whole-page shift is a transform, not per-object churn.
+2. **Per-object signature** (position-independent): object class + a normalized
+   geometry/content signature — for **text runs**, the Unicode string + font-size
+   class; for **paths**, a hash of the operator/relative-point sequence; plus style
+   (stroke/fill). Absolute page coordinates are *not* part of the identity key.
+3. **Order-stable matching** via an LCS over the content-stream draw-operation
+   order keyed on the signature (a "text diff" over draw ops), so insertions and
+   deletions align instead of cascading. Residual unmatched objects fall to greedy
+   nearest-neighbour within a spatial tolerance.
+
+If the matcher's confidence for a page is low, the page **degrades to the hybrid /
+raster tier** rather than emitting a misleading object-level diff.
+
+**The `modified` predicate (per tier).** Added/deleted are presence-based and
+unambiguous; *modified* is defined explicitly so "orange" means one thing:
+
+- *Vector object-level:* an object that **matches** identity (step 2 signature) but
+  differs in a rendered attribute — position beyond the alignment tolerance, a
+  transform, or a style change (stroke/fill/font size). A matched, identically
+  rendered object is *unchanged*. A **moved-but-identical** object is *modified*
+  (position delta) **up to a displacement threshold**; beyond it the objects no
+  longer read as "the same thing moved" and are emitted as *deleted + added*.
+- *Text + raster hybrid / raster overlay:* no object identity — *modified* is a
+  **changed region** that is neither wholly new nor wholly removed (region-level,
+  not object-level).
+
 **Full vectorization — no client font dependencies.** The output SVG is a
 *complete* vector graphic: all text is converted to **glyph path outlines**, never
 `<text>` elements that rely on fonts installed on the client. The diff is still
@@ -133,6 +167,16 @@ tier available:
    geometry-level deltas on *modified* elements.
 3. **True mesh boolean** *(fallback)* — geometric boolean difference/intersection
    for mesh-only formats (glTF, tessellated STEP) with no stable identity.
+
+**The `modified` predicate (per tier).** For **GlobalId matching**, an element with
+the same GlobalId whose **geometry hash differs** is *modified* → orange. A
+**property-only change** (e.g. fire rating updated, geometry identical) has **no
+visual delta**, so it is **not** colored orange by default; it is recorded in the
+element's metadata as `change=property` (vs `change=geometry`) and surfaced on
+selection, so a properties/attribute diff panel can show it without repainting
+geometry that looks unchanged. For the **hybrid / mesh-boolean** tiers there is no
+property channel — *modified* is a geometry-level delta (the boolean difference
+volume) only.
 
 Output: a single **Xeokit XKT** whose object tree has three top-level groups —
 **old**, **new**, **difference** — selectable via show/hide/x-ray. Elements are
@@ -165,14 +209,38 @@ There is no pre-existing front-end spec; this is the contract.
 
 ### 7.1 Result shape
 
-- **One diff rendition per version-pair.** For 2D that rendition addresses the
-  set of per-page SVGs; for 3D it is the XKT.
-- The rendition carries a **`mode` metadata field**:
+- **One diff rendition per version-pair**, but it is a *set* of stored children:
+  for 2D, N per-page SVGs; for 3D, one XKT — **plus a single `manifest` object**
+  that describes the whole result.
+- The `manifest` (the mode-metadata object) carries:
+  - `status`: `"pending"` | `"ready"` | `"failed"` (§7.1.1).
   - `mode`: `"vector"` | `"raster"` | `"mixed"` (2D) / `"xkt"` (3D).
   - a **per-unit map** — `pages: [{ index, mode }]` (2D) — so the front end knows,
     per page, whether to drive the scriptable-vector view or the raster-overlay
     view; `elements`/group summary for 3D.
+  - the **expected child set** (page count / child ids or a content hash) so a
+    reader can confirm the set is complete.
+  - on failure: `failure: { stage, tiers_attempted, reason }`.
   - `base_version`, `target_version`, `plugin`, `plugin_version`.
+
+#### 7.1.1 Atomicity — the manifest is the commit marker
+
+Because delivery is at-least-once and a worker can die mid-write, the per-pair
+result must never be served half-formed:
+
+- The worker writes **all content children first** (all page SVGs / the XKT), then
+  writes the **`manifest` last**. The manifest's presence *is* the "diff complete"
+  signal.
+- The READ path (§8) keys off the manifest: **no manifest ⇒ treated as not-yet-
+  computed** (`pending`), never a partial diff. A reader may additionally validate
+  the children against the manifest's expected-set before serving.
+- **Regeneration** (plugin-version bump, or a re-run for the same key) rewrites the
+  content children and overwrites the manifest; stale prior children for the key
+  are removed. Re-processing the same `(file_uid, target_version)` is idempotent —
+  identical inputs reproduce the same manifest.
+- A run that fails after exhausting even the raster/mesh fallback still writes a
+  manifest with `status: "failed"` (so "attempted and failed" is distinguishable
+  from "never attempted" = no manifest).
 
 ### 7.2 2D SVG scriptable hooks
 
@@ -210,8 +278,17 @@ new viewer code.
 | GET  | `/readyz` | readiness (gRPC core + LDAP) |
 | POST | `/auth/token` | LDAP bind → bearer token |
 | GET  | `/whoami` | resolved identity |
-| GET  | `/files/{uid}/diff` | READ-gated diff for target vs base (query: `version`, optional `base`); returns/points at the rendition + `mode` metadata |
+| GET  | `/files/{uid}/diff` | READ-gated diff for target vs base (query: `version`, optional `base`); returns the `manifest` + child references |
 | POST | `/diff/reconcile` | trigger a reconcile sweep (recompute missing / stale-plugin renditions) |
+
+`/files/{uid}/diff` responds off the manifest `status` (§7.1.1), giving the front
+end a defined path for every outcome:
+
+- **`ready`** → `200` with the manifest + child references; the FE renders the diff.
+- **no manifest / `pending`** → `202` "computing"; on-demand generation is queued
+  (via the M1 path) and the FE polls or shows a spinner.
+- **`failed`** → a defined `422`/`409` with the `failure` detail; the FE falls back
+  to a plain side-by-side of the two versions rather than a broken diff.
 
 Unauthenticated `/healthz` `/readyz` (and any `/poolz`) bind **loopback-only**,
 per the monitoring convention.
