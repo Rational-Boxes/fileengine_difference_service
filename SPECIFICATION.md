@@ -1,5 +1,7 @@
 # Difference Service — version-comparison back end
 
+Companion: [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md).
+
 A FileEngine microservice that generates **visual diffs between two versions of a
 file**. Given a file identifier and a target version, it produces a color-coded
 comparison of that version against a base version (the immediate predecessor by
