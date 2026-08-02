@@ -108,6 +108,15 @@ Each page independently uses the highest-fidelity tier its content supports:
 Page correspondence must tolerate inserted / deleted / reordered pages (whole
 inserted pages are all-added, deleted pages all-deleted).
 
+**Full vectorization — no client font dependencies.** The output SVG is a
+*complete* vector graphic: all text is converted to **glyph path outlines**, never
+`<text>` elements that rely on fonts installed on the client. The diff is still
+computed at the object level from the source PDF's text runs and vector objects
+(so `data-diff-state` reflects semantic add/delete/modify); the *rendered* result
+embeds those glyphs as `<path>` geometry so a page renders identically on any
+client regardless of available fonts. (Embedded raster images on a page remain
+raster; scanned pages use the raster tier.)
+
 Output: one **per-page SVG** conforming to the §7 contract.
 
 ### 5.2 3D — per-element degradation ladder
@@ -171,6 +180,9 @@ Each page SVG is authored so the front end can toggle views without re-fetching:
   `#diff-new`, `#diff-changes`.
 - Every diffed element carries `data-diff-state` ∈
   `added` | `deleted` | `modified` | `unchanged`.
+- **No font dependencies:** text is emitted as `<path>` glyph outlines, not
+  `<text>` (§5.1), so the SVG is self-contained and renders identically on any
+  client.
 - State→color is applied by front-end CSS (red/green/orange); the SVG ships the
   semantic state, not hard-coded colors, so themes can restyle.
 - Root `<svg>` carries `data-diff-mode` (`vector` | `raster`). For **raster**
