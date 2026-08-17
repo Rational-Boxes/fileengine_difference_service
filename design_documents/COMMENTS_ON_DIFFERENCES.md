@@ -182,7 +182,60 @@ viewBox** (`0 0 595 842`), so page-relative markup coordinates map onto the diff
 page unchanged. The markup layer does not need to know which source is beneath
 it. Worth verifying early, because the whole merge rests on it.
 
-### 5.2 One window, one comment rail
+### 5.2 The mechanism already exists: a comparison is a peer of "view marked-up copy"
+
+This does not need a new interaction. `DocumentPreview` already supports *"a
+comment restores something other than the live document into this viewer"*:
+
+```
+CommentNode  "📄 View marked-up copy"   → emit('show-markup', markup, commentId)
+ThreadPanel  forwards
+DocumentPreview.onShowMarkup()          → confirmDiscard()          guard unsaved work
+                                        → renditionObjectUrl(...)   load the substitute
+                                        → markupView = markup       "not the live doc"
+                                        → activeMarkupCommentId     highlight the source
+DocumentPreview.closeMarkupView()       → back to the live document
+```
+
+Every hard part is solved there: the unsaved-markup guard, the "you are looking at
+a substitute" state, the highlight tying the view back to the comment that opened
+it, and the return path.
+
+**A `diff-view` comment is the same affordance with a different payload**, and one
+difference that matters: it swaps the **underlying widget**, not just the PDF
+source.
+
+```
+CommentNode  "🔀 View comparison"       → emit('show-diff', anchor, commentId)
+DocumentPreview.onShowDiff()            → confirmDiscard()          same guard
+                                        → resolve the rendering set (§2)
+                                        → substitute = {kind:'diff', …}
+                                        → activeCommentId           same highlight
+```
+
+So `markupView` generalises from *"a markup rendition or null"* to a small
+discriminated union — the same shape the thread anchors already use:
+
+```ts
+type Substitute =
+  | { kind: 'markup'; markup: CommentMarkup; url: string }   // today
+  | { kind: 'diff'; pages: DiffChildRef[]; page: number; view: ViewId }
+  | null                                                      // the live document
+```
+
+and the template picks the widget from it: `<PdfViewer>` for the live document and
+for a markup (both are PDFs), `<DiffPageViewer>` for a comparison. The comment
+rail, paging, the guard and the return path are untouched.
+
+The button follows the existing pattern too, including its active state —
+`📄 Viewing marked-up copy` has a peer in `🔀 Viewing comparison`, so a reader can
+always tell what the viewer is showing and which comment put it there.
+
+**Consequence for scope:** the merge is mostly *generalising one state variable*
+rather than building a combined viewer. That is a much smaller change than §5
+first suggested, and it inherits behaviour that has already been through review.
+
+### 5.3 One window, one comment rail
 
 The merge is **with the unified comment system**, not merely between two viewers.
 The rail is already the same component (`ThreadPanel`, used by both the PDF and
@@ -263,8 +316,11 @@ Each step is independently useful, and the risky part is deliberately first:
    set (§2); clicking View reopens that set at the right page and layer.
    Delivers the headline ask with no schema change.
 3. **Purge guard + dead end** (§3), shipped with step 2 rather than after it.
-4. **Merge the overlays** (§5) behind a single viewer, with the pair picker in
-   the overlay alongside the drawer's (§5.1).
+4. **Generalise `markupView` into a substitute union** (§5.2) so the viewer can
+   host a comparison as it already hosts a marked-up copy, and add the pair
+   picker to the overlay alongside the drawer's (§5.1). Smaller than "merge the
+   overlays" implies: the guard, the highlight and the return path already exist
+   and are inherited unchanged.
 5. **Markup subjects** (§6) so annotations bind to what they annotate.
 
 Steps 2–3 are the smallest thing that satisfies "comment on a differenced view
