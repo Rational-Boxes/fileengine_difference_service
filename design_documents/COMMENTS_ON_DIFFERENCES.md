@@ -182,6 +182,46 @@ viewBox** (`0 0 595 842`), so page-relative markup coordinates map onto the diff
 page unchanged. The markup layer does not need to know which source is beneath
 it. Worth verifying early, because the whole merge rests on it.
 
+### 5.2 One window, one comment rail
+
+The merge is **with the unified comment system**, not merely between two viewers.
+The rail is already the same component (`ThreadPanel`, used by both the PDF and
+3D overlays) and threads are keyed on `file_uid` — so a file's threads are *one
+list* regardless of what is on screen. The merged window keeps that single rail
+mounted across all three modes:
+
+```
+┌──────────────────────────────┬───────────────┐
+│  [ Document ] [ Compare ▾ ]  │   Comments    │
+│                              │               │
+│   PDF page  /  diff layers   │  · file-level │
+│   + markup layer             │  · v3 markup  │
+│                              │  · v1→v3 diff │
+└──────────────────────────────┴───────────────┘
+```
+
+**The consequence: View becomes a mode switch.** Today it restores a 3D camera.
+In the merged window a thread's anchor decides which mode the viewer must be in,
+so clicking View on:
+
+- a **file/version** thread while comparing → switches back to **Document** at
+  that version and page;
+- a **`diff-view`** thread while reading the document → switches to **Compare**,
+  loads that rendering set, and selects the page and layer;
+- a **`model-viewpoint`** thread → hands off to the 3D viewer as it does now.
+
+That is the real payoff of merging: a reviewer reads one conversation about the
+document, and each comment takes them to whatever view it was made against —
+rather than having to know in advance which window a given comment "belongs" to.
+It also removes an ambiguity in the current split, where a diff comment would
+otherwise be invisible from the document view even though it is about the same
+file.
+
+**Composing a comment inherits the mode.** Opening a thread while in Compare
+captures a `diff-view` anchor; while in Document it captures today's file/version
+anchor. The reviewer never chooses an anchor kind — the view they are looking at
+already expresses it.
+
 ---
 
 ## 6. What a markup on a difference *means* — and the gap
