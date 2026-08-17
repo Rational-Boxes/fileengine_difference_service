@@ -78,21 +78,74 @@ a new *version* of the first file rather than a second file. Do them in order.
 Do this once on `pdf-inserted_object.pdf` to learn the controls.
 
 1. Open the file's details drawer → **Versions** tab.
-2. **Check:** the *newest* version offers a **compare** action; the **oldest does
-   not**. (A first version has no predecessor — offering it would only ever
-   produce "nothing to compare against".)
-3. Click **compare** on the newest version.
-4. **Check:** a full-screen overlay opens, titled `Compare — <filename>`, showing
-   the two version timestamps as `before → after`.
-5. **Check:** while it computes you see *"Comparing versions…"*. First run on a
-   file takes a few seconds; it should then render on its own without a refresh.
+2. **Check:** ticking versions is limited to **two**; a third tick is refused.
+   With exactly two versions on the file, both are already ticked and **Compare
+   selected** is ready — there is no decision to make, so you are not asked to
+   make one.
+3. Click **Compare selected**.
+4. **Check:** the ordinary **preview window** opens — the same one that shows the
+   document and its comments — now showing the comparison, with the discussion
+   rail beside it. There is **no separate comparison window**: if you find
+   yourself somewhere that has a comparison but no comments, that is the bug this
+   step is looking for.
+5. **Check:** while it computes you see *"Preparing the comparison…"*. First run
+   on a file takes a few seconds; it should then render on its own without a
+   refresh. After ~3 polls it also says a large document can take a while.
 6. **Check:** three view buttons — **Before**, **After**, **Difference** — with
    *Difference* selected, and a legend showing red/green/orange.
 7. Click between the three views. **Check:** switching is **instant**. It is layer
    visibility inside one already-loaded document, so any network delay here means
    something is wrong.
-8. Press **Esc** or the ✕. **Check:** the overlay closes and the file browser is
-   exactly as you left it — same folder, same scroll position.
+8. **Check:** the header shows `Before → After` menus and a **Compare** button.
+   Pick a different pair. **Check:** the view updates, and the *Before* menu never
+   offers a version newer than the one chosen as *After*.
+9. Click **← Back to document**. **Check:** you are on the live document, in the
+   same window, with the discussion rail untouched.
+10. **Check:** with the document showing, **🔀 Compare versions** is offered, and
+    it returns you to the comparison controls without going back to the drawer.
+
+### 2.1 Zoom and pan (do this on a drawing, §7.1)
+
+The reason this exists: at fit-width a large sheet's dimension text is a few
+pixels tall, so a changed callout is *visible* but not *readable*.
+
+1. Scroll the wheel over the page. **Check:** it zooms, and the point under the
+   cursor stays put — it should feel like moving a magnifier over the sheet, not
+   like scrolling a picture.
+2. **Check:** the percentage in the toolbar tracks the zoom. 100% means *fits the
+   window*, not "actual size" — there is no meaningful actual size for an SVG.
+3. Zoom in, then drag the page. **Check:** the drawing moves exactly with the
+   pointer, and the cursor shows a grab hand. Drag hard toward one corner:
+   **Check:** the page cannot be pushed off-screen entirely.
+4. **Check:** zoomed in on vector content, lines and text stay **crisp** — the
+   comparison is re-rendered at the new scale, not magnified. If it goes blocky
+   on a `vector` page, the tier badge is lying or the transform is wrong.
+   (A `scanned` page *will* go blocky; that one is genuinely pixels.)
+5. Try to zoom out below 100%. **Check:** it stops at the whole page.
+6. Step to the next page. **Check:** the zoom is **kept** — checking the same
+   detail across sheets should not mean zooming back in each time.
+7. Double-click, or click **Fit**. **Check:** back to the whole page.
+
+### 2.2 Commenting on a comparison
+
+1. With a comparison on screen, zoom into a specific change and click
+   **💬 Comment on this comparison**.
+2. **Check:** a chip appears above the composer reading *"Comparison attached"*
+   with the view and page — not the 3D wording, which would be a plain lie here.
+3. Post the comment.
+4. Navigate away (Back to document, or close and reopen the file).
+5. Find the thread and click **🔀 View comparison**.
+6. **Check:** you land on **the same pair, the same page, the same view, and the
+   same zoom and pan** — pointing at the detail, not at the sheet. This is the
+   whole point: on a B1 drawing, "page 3, difference" is not a location.
+7. **Check:** the thread offers **no** 🎯 View or ⬇ BCF buttons. Those need a 3D
+   viewpoint; a BCF export of a PDF comparison would produce a file nothing can
+   open.
+8. Upload a further version of the file. Reopen the comment and click **🔀 View
+   comparison** again. **Check:** it still restores the *original* pair. A pair of
+   versions is immutable, so its comparison is valid forever — a new upload must
+   not disturb it, and must not have deleted it either (that regression is
+   covered in §8).
 
 ---
 
