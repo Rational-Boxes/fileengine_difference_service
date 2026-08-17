@@ -7,12 +7,18 @@ parallel demo that can drift — it is the same corpus, driven through the real 
 The automated suite proves the service *says* the right thing; this pass is for
 judging whether it *looks* right, which is the part a test cannot check.
 
-Generate the samples first if `samples/` is missing:
+The sample files are **committed** in `samples/`, so this pass can be repeated by
+anyone without regenerating anything. If you ever need to rebuild them (after
+changing a fixture, say):
 
 ```bash
 cd difference_service
 python3 tools/export_samples.py
 ```
+
+`src/tests/test_samples_current.py` checks the committed files still match the
+fixtures they came from, so a stale sample cannot quietly outlive its fixture and
+send a future reviewer chasing behaviour that no longer exists.
 
 ---
 

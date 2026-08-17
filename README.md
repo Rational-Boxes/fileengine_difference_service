@@ -211,8 +211,9 @@ difference-service                         # :8100
 
 For a by-hand pass through the real UI, see
 [`MANUAL_TESTING.md`](MANUAL_TESTING.md) — a step-by-step runbook over the same
-fixtures the automated suite uses. Generate its sample files with
-`python3 tools/export_samples.py`.
+fixtures the automated suite uses. Its sample files are committed in `samples/`
+(rebuild with `python3 tools/export_samples.py`), and a test asserts they still
+match the fixtures they were generated from.
 
 ```bash
 pytest                    # hermetic units — no core, LDAP, or redis needed
