@@ -1,0 +1,51 @@
+[project]
+name = "difference-service"
+version = "0.1.0"
+description = "FileEngine version-comparison microservice — colour-coded visual diffs (permission-gated)"
+license = {text = "AGPL-3.0-or-later"}
+authors = [{name = "James Hickman", email = "james@rationalboxes.com"}]
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.30",
+    "ldap3>=2.9",
+    "grpcio>=1.50",
+    "protobuf>=4.21",
+    "pydantic>=2.0",
+    "redis>=5.0",
+    "PyJWT>=2.8",         # verify http_bridge HS256 bearer tokens locally
+]
+# The FileEngine Python client (`fileengine`, from ../python_interface) is reused
+# at runtime for gRPC core access (version content, permission checks, rendition
+# writes), exactly as convert_search_ai / folder_actions do. Install it
+# (`pip install ../python_interface`) or rely on the sibling-checkout bootstrap in
+# difference_service._client.
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "httpx>=0.27"]
+# Format plugins land in M2/M3; their toolchains are opt-in extras so the core
+# service installs and runs without any heavy geometry/PDF dependency. A missing
+# backend degrades a tier (SPECIFICATION.md §4) rather than failing the service.
+pdf = ["pypdf>=4.0", "pdfplumber>=0.11"]          # M2 — vector/text extraction
+raster = ["pdf2image>=1.17", "Pillow>=10.0"]      # M2 — raster fallback tier
+ifc = ["ifcopenshell>=0.7"]                       # M3 — IFC GlobalId matching
+
+[project.scripts]
+difference-service = "difference_service.app:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["difference_service*"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+markers = [
+    # Tests that need a running dev stack (gRPC core + LDAP). Deselected by
+    # default: `pytest` is hermetic, `pytest -m live` exercises the real thing.
+    "live: requires a live FileEngine core + LDAP (see README)",
+]
+addopts = "-m 'not live'"

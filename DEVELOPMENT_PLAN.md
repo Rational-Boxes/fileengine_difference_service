@@ -1,7 +1,9 @@
 # Difference Service — Development Plan
 
-Status: **Design** (implementation not yet started). Companion:
-[`SPECIFICATION.md`](./SPECIFICATION.md).
+Status: **M0 complete** (2026-08-17) — scaffolding, auth, plugin framework and the
+manifest types are in, with a `@live` harness passing against a real core + LDAP.
+No format plugins yet. Next: **M1** (event ingest, version-pair resolution,
+rendition writer). Companion: [`SPECIFICATION.md`](./SPECIFICATION.md).
 
 ## 1. Purpose & scope
 
@@ -34,7 +36,7 @@ working-dir `.env` `Config`; `FILEENGINE_*` shared names, `DIFF_*` local; reused
 
 Each milestone is independently shippable and ends with `@live`-gated tests.
 
-### M0 — Scaffolding
+### M0 — Scaffolding ✅ *(done 2026-08-17)*
 - Package + `pyproject.toml` (src layout), `Config` (`FILEENGINE_*` / `DIFF_*`).
 - Reused `fileengine` gRPC client + `core_client` (end-user vs. worker identity);
   LDAP bind → bearer (`/auth/token`, `/whoami`).
@@ -43,6 +45,19 @@ Each milestone is independently shippable and ends with `@live`-gated tests.
   MIME, `name`/`version` fields), `DiffResult` / mode-metadata types — no format
   plugins yet.
 - `@live` harness against a dev core + LDAP.
+
+Notes from the build:
+- **No Postgres.** §2 listed it as "if needed beyond rendition metadata" — it is
+  not. The cache key and its invalidation live on the renditions (§6) and the
+  manifest is the commit marker (§7.1.1); a database would be a second source of
+  truth that could disagree with what is actually stored.
+- The manifest types landed in M0 rather than M1, since `DiffResult` is only
+  meaningful alongside the manifest it commits to.
+- The core reports the **root sentinel with an empty `uid`** — assert on
+  `name`/`is_dir`, not on the uid round-tripping.
+- The dev admin user resolves to **`system_admin`**, a full ACL bypass in the core,
+  so a permission result for an admin proves nothing about the ACL. Fail-closed
+  behaviour must be tested against an unreachable core, not a bogus UID.
 
 ### M1 — Event ingest, versioning & rendition writer
 - Event consumer on `fileengine:events`: act on `file.updated`, ignore
