@@ -31,9 +31,14 @@ exist specifically to *fail* a naive implementation (a whole-page shift, a
 mid-stream insertion, a renamed glTF node), so treat those as the interesting
 cases rather than the edge cases.
 """
-from . import gltf, ifc, pdf
+from . import cad, gltf, ifc, pdf
 
 #: All corpora, for tests that sweep every fixture.
+#: Dependency-free corpora, safe to sweep in any environment.
 CORPORA = {"pdf": pdf, "ifc": ifc, "gltf": gltf}
 
-__all__ = ["pdf", "ifc", "gltf", "CORPORA"]
+#: Corpora needing an external toolchain to GENERATE (see cad.py). Kept separate
+#: so the generic sweeps stay hermetic and skip cleanly without it.
+TOOLCHAIN_CORPORA = {"cad": cad}
+
+__all__ = ["pdf", "ifc", "gltf", "cad", "CORPORA", "TOOLCHAIN_CORPORA"]

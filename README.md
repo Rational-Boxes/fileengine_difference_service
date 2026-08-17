@@ -20,11 +20,11 @@ Structurally a sibling of `convert_search_ai` / `folder_actions`: reused
 
 ## Status
 
-**M0 + M1 + M2 complete.** Config, auth, dual-identity core access, the plugin
+**M0 – M3 complete.** Config, auth, dual-identity core access, the plugin
 framework and manifest types (M0); the event worker, version-pair resolution, the
 rendition writer and the reconcile sweep (M1); the **PDF plugin** with per-page
-tier degradation (M2) — all validated end-to-end against a live core. 3D is M3, so
-non-PDF pairs still report "unsupported".
+tier degradation (M2); the **3D plugin** across IFC, glTF/GLB and CAD (M3) — all
+validated end-to-end against a live core. Next is M4, the request surface.
 
 ### PDF diffing (M2)
 
@@ -132,10 +132,32 @@ Bumping a plugin's `version` misses the old key and regenerates.
 The unauthenticated monitoring endpoints bind **loopback-only** and honour
 `FILEENGINE_MONITORING_ALLOW_IPS`.
 
+### 3D diffing (M3)
+
+Every supported 3D format normalizes into one internal model, and the tier is
+chosen by **what identity the data carries** — never by file extension:
+
+| Formats | Identity | Tier |
+|---|---|---|
+| IFC | GlobalId | **stable-id** — `modified` splits into geometry (orange) vs property-only (**no visual delta**) |
+| glTF / GLB | none | **geometry** — matched by shape; a move is honestly removed + added volume |
+| STEP, IGES, BREP, OBJ, STL | none | **geometry**, via OpenCASCADE tessellation to glTF |
+
+Adding a format is writing a *loader*: the diff, the states, the output and the
+manifest are unchanged by construction. An IFC that fails to tessellate falls to
+geometry matching by the same rule.
+
+Output is one XKT whose object tree has `old` / `new` / `difference` at the top,
+plus a MetaModel sidecar carrying each element's state and change kind. **The
+existing Xeokit viewer is reused unchanged** — its stock show/hide/x-ray drives the
+three views. A property-only change appears in the MetaModel (visible on selection)
+but never in the `difference` group, because painting geometry that looks identical
+teaches reviewers to distrust the colour.
+
 ## Fixtures
 
 `src/tests/fixtures/` generates version pairs with **documented ground truth** —
-14 PDF, 9 IFC, 7 glTF. They are generated, never committed binaries, so each
+14 PDF, 9 IFC, 7 glTF, plus 3 toolchain-generated STEP pairs. They are generated, never committed binaries, so each
 difference is one readable edit and the corpus needs no toolchain to produce.
 
 Several exist specifically to *fail* a naive implementation, and those are the
@@ -150,6 +172,7 @@ interesting ones:
 | `ifc.property_only` | a property change has **no visual delta** — must not paint orange |
 | `ifc.reordered_entities` | STEP entity numbers are not identity; only GlobalId is |
 | `gltf.renamed_node` | glTF names are not identity — renaming must not read as delete+add |
+| `cad.unchanged` | proves OCCT tessellation is deterministic; if it weren't, every CAD element would compare modified |
 
 ```python
 from tests.fixtures import pdf, ifc, gltf

@@ -123,6 +123,14 @@ def default_registry(config=None) -> PluginRegistry:
     except Exception:                      # toolchain absent -> the type is simply
         log.info("PDF diff plugin unavailable", exc_info=True)   # unsupported
 
+    # 3D / BIM / CAD (M3). Also lazy: ifcopenshell and the OCCT/Node tools are
+    # heavy, and a PDF-only deployment must not require them to start.
+    try:
+        from .three_d import ThreeDDiffPlugin
+        plugins.append(ThreeDDiffPlugin(config=config))
+    except Exception:
+        log.info("3D diff plugin unavailable", exc_info=True)
+
     if enabled and "passthrough-text" in enabled:
         from .passthrough import PassthroughTextPlugin
         plugins.append(PassthroughTextPlugin())

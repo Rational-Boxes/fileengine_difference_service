@@ -1,11 +1,11 @@
 # Difference Service — Development Plan
 
-Status: **M0 + M1 + M2 complete** (2026-08-17) — scaffolding, auth, plugin framework,
+Status: **M0 – M3 complete** (2026-08-17) — scaffolding, auth, plugin framework,
 manifest types, event ingest, version-pair resolution, the rendition writer and the
-reconcile sweep, and the **PDF (2D) plugin** with its per-page tier ladder — all
-validated end-to-end against a live core. A **fixture corpus** with documented
-ground truth backs the matcher. Next: **M3** (the 3D plugin). Companion:
-[`SPECIFICATION.md`](./SPECIFICATION.md).
+reconcile sweep, the **PDF (2D) plugin**, and the **3D plugin** covering IFC,
+glTF/GLB and the OpenCASCADE CAD formats — all validated end-to-end against a live
+core. A **fixture corpus** with documented ground truth backs both matchers. Next:
+**M4** (the request surface). Companion: [`SPECIFICATION.md`](./SPECIFICATION.md).
 
 ## 1. Purpose & scope
 
@@ -150,7 +150,7 @@ Notes from the build:
 - The **hybrid tier (2) is not separately implemented** — it currently routes to
   raster. A half-measure with no independent backend would be a tier in name only.
 
-### M3 — 3D plugin
+### M3 — 3D plugin ✅ *(done 2026-08-17)*
 - Per-element ladder: **IFC GlobalId matching → hybrid (GlobalId + boolean on
   modified) → true mesh boolean**.
 - Inputs **IFC, glTF/GLB, STEP**; XKT output via the convert2xkt pipeline.
@@ -159,6 +159,36 @@ Notes from the build:
   unchanged.**
 - (STEP/glTF land on the mesh-boolean tier — heaviest path; see spec §10 note. May
   be scoped as M3a IFC-first, M3b glTF/STEP.)
+
+Notes from the build — **NOT scoped IFC-first**; every supported format landed
+together, because the design that makes that cheap is the right one anyway:
+- **The tier is chosen by the identity the data carries, not by file extension.**
+  Every format normalizes into one `Model3D` and a single matcher compares them:
+  durable ids (IFC GlobalId) take tier 1, everything else takes geometry matching.
+  Adding a format is writing a *loader*; the diff, the states, the XKT and the
+  manifest are unchanged by construction. An IFC that fails to tessellate falls to
+  geometry matching by the same rule, with no special case.
+- **Coverage**: IFC (ifcopenshell) → tier 1; glTF/GLB (native parser) → tier 3;
+  STEP, IGES, BREP, OBJ, STL (OpenCASCADE `DRAWEXE` → glTF) → tier 3. One
+  conversion hop bought all five CAD formats, and their behaviour is identical to
+  glTF's rather than a parallel implementation that could drift.
+- **The geometry hash is tessellated world-space vertices**, never the entity
+  graph. A structural hash is far cheaper and far too easy to contaminate with a
+  non-geometric attribute — and that failure mode (a model that looks identical
+  lighting up orange) is the one that teaches reviewers to ignore the colour.
+  World coordinates are non-negotiable: in local coordinates a wall moved 10m
+  hashes exactly as before.
+- **Mesh deflection is fixed, not adaptive.** Two versions must be tessellated
+  identically or every element compares modified purely because the mesher chose
+  different triangles. The `cad.unchanged` fixture exists to prove this holds.
+- **Geometry pairing is globally nearest-first, not in file order.** Iterating the
+  old list and letting each element claim its closest partner looks equivalent but
+  isn't: with several copies of one component, whichever came first in the file
+  claimed a distant partner and the copy that genuinely stayed put was reported
+  deleted+added.
+- Without `convert2xkt` the merged glTF is delivered instead — a complete
+  three-group model beats no diff, and the manifest says which the viewer is
+  getting.
 
 ### M4 — Request surface & permission gating
 - `GET /files/{uid}/diff` (query `version`, optional `base`) — READ-gated;
