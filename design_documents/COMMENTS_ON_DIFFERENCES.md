@@ -11,6 +11,35 @@ Companions: `SPECIFICATION.md` (this service),
 
 ---
 
+## 0. The resulting taxonomy
+
+A comment is one of three things, and this is the whole model:
+
+| | What it is about | Where it is stored | Restoring it shows |
+|---|---|---|---|
+| **plain** | the file (optionally a version) | `threads.anchor = NULL` | the live document |
+| **marked-up copy** | an annotated snapshot of the PDF | `comments.markup` (Phase 7.1) | that saved copy, read-only |
+| **difference set** | a comparison of two versions | `threads.anchor.kind = "diff-view"` | that rendering set (§2) |
+
+The three are not variants of one field, and the asymmetry is deliberate rather
+than accidental — it is worth being explicit about because it answers the obvious
+follow-up question:
+
+- **A difference reference sits on the THREAD.** A thread is a conversation
+  *about* one comparison, so every reply inherits it. You cannot have a reply in
+  the same thread that is about a different pair — and you should not: that is a
+  new conversation.
+- **A markup sits on the COMMENT.** Each reply may attach its own marked-up copy,
+  because "here is what I mean" is a per-remark act. Three people can mark up the
+  same page differently within one thread.
+
+So a diff thread whose replies carry markups is a legitimate and useful
+combination: *"comparing v1→v3, here is what I circled on the change I am talking
+about"*. That is the case §6 has to name properly — a markup captured while
+looking at a comparison annotates the comparison, not either version.
+
+---
+
 ## 1. What already fits
 
 The discussion service is **anchor-agnostic by design**, which is most of the
