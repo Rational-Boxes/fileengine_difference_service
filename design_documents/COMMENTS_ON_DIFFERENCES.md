@@ -206,10 +206,28 @@ trigger, not a second implementation. The overlay's picker defaults to the pair
 containing the version on screen, so the common case ("what changed in the
 revision I am reading?") is one click, while any pair stays reachable.
 
-**Why this is tractable:** a diff page SVG uses the **PDF page box as its
-viewBox** (`0 0 595 842`), so page-relative markup coordinates map onto the diff
-page unchanged. The markup layer does not need to know which source is beneath
-it. Worth verifying early, because the whole merge rests on it.
+**Verified, and the original assumption was WRONG.** This section first claimed
+markup was page-relative coordinates that would map onto a diff page unchanged.
+It is not: `PdfViewer.saveBytes()` calls PDF.js `saveDocument()`, so a markup is
+**a complete PDF copy with the annotations baked in**. There is no coordinate
+layer to re-point at a different backdrop, and PDF.js cannot annotate an SVG
+because there is no PDF document underneath it.
+
+Consequences, which are smaller than they sound:
+
+- **Commenting on a comparison needs no markup at all** (§0: a difference-set
+  comment is its own kind). Steps 2–3 of the sequence are unaffected.
+- **Marking up a comparison** requires the comparison to *be* a PDF. The natural
+  route is for the service to emit a PDF rendition of the diff beside the SVGs,
+  after which the existing markup pipeline works unchanged and a marked-up
+  comparison is just another saved copy. That is additive to the plugin and does
+  not disturb the SVG contract.
+- Doing it client-side (rasterise the SVG into a one-page PDF in the browser) is
+  possible but puts a second renderer in the front end for no gain.
+
+Marking up a comparison is therefore **deferred**, not designed out. It is worth
+noting the semantics fit: a markup is inherently a *snapshot* of what the author
+was looking at, and a flattened PDF of the difference view is exactly that.
 
 ### 5.2 The mechanism already exists: a comparison is a peer of "view marked-up copy"
 
@@ -338,9 +356,10 @@ comment. Naming is the more robust half; doing both is defensible.
 
 Each step is independently useful, and the risky part is deliberately first:
 
-1. **Verify the coordinate assumption** (§5) — that markup coordinates land
-   correctly over a diff page. If it fails, the merge needs rethinking before
-   anything is built on it.
+1. ~~Verify the coordinate assumption (§5)~~ — **done, and it failed.** Markup is
+   a baked PDF copy, not coordinates, so marking up a comparison needs a PDF of
+   the comparison (§5). Commenting on one does not, so the rest of the sequence
+   stands.
 2. **`diff-view` anchor + restore**, no markup. A comment references a rendering
    set (§2); clicking View reopens that set at the right page and layer.
    Delivers the headline ask with no schema change.
