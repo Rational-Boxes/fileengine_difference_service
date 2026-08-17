@@ -1,11 +1,12 @@
 # Difference Service — Development Plan
 
-Status: **M0 – M3 complete** (2026-08-17) — scaffolding, auth, plugin framework,
+Status: **M0 – M4 complete** (2026-08-17) — scaffolding, auth, plugin framework,
 manifest types, event ingest, version-pair resolution, the rendition writer and the
 reconcile sweep, the **PDF (2D) plugin**, and the **3D plugin** covering IFC,
-glTF/GLB and the OpenCASCADE CAD formats — all validated end-to-end against a live
-core. A **fixture corpus** with documented ground truth backs both matchers. Next:
-**M4** (the request surface). Companion: [`SPECIFICATION.md`](./SPECIFICATION.md).
+glTF/GLB and the OpenCASCADE CAD formats, and the **request surface** with its
+READ gate and permission cache — all validated end-to-end against a live core. A
+**fixture corpus** with documented ground truth backs both matchers. Remaining:
+the **Hardening** section below. Companion: [`SPECIFICATION.md`](./SPECIFICATION.md).
 
 ## 1. Purpose & scope
 
@@ -190,12 +191,38 @@ together, because the design that makes that cheap is the right one anyway:
   three-group model beats no diff, and the manifest says which the viewer is
   getting.
 
-### M4 — Request surface & permission gating
+### M4 — Request surface & permission gating ✅ *(done 2026-08-17)*
 - `GET /files/{uid}/diff` (query `version`, optional `base`) — READ-gated;
   serves the cached rendition + `mode` metadata, or triggers on-demand generation
   via the M1 path for an uncomputed pair.
 - `POST /diff/reconcile`.
 - Permission cache (TTL-bounded, invalidated by `acl.changed` / `role.*`).
+
+Notes from the build:
+- **`GET /files/{uid}/diff` answers 202 and queues, it does not block.** A BIM or
+  PDF diff takes tens of seconds; holding the request open ties up a worker, times
+  out at whatever proxy is in front, and gives the FE no way to show progress. The
+  five documented outcomes each imply a different FE action: `ready` (200, render),
+  `pending` (202, poll), `failed` (422, fall back to side-by-side), `unsupported`
+  (200, flip between versions locally — §5.3, so it must NOT be an error), and
+  `none` (200, a first version has no predecessor and never will, so the FE must
+  stop polling rather than wait for something that cannot arrive).
+- **The job queue is not load-bearing.** It coalesces by pair key and is bounded;
+  everything it does the event worker and reconcile sweep also do, and the
+  manifest check makes a duplicate run a cache hit. Losing it on restart costs
+  latency, not results — so a full queue still answers 202 rather than erroring.
+- **On-demand generation runs as the WORKER principal.** The request is authorized
+  as the *user* before queueing, but the generation writes renditions and must not
+  depend on that user still being around when it runs.
+- **The permission cache fails closed and never caches an error.** Guessing
+  "allow" on an unreachable core is a vulnerability; caching the denial would lock
+  a user out for the whole TTL over a blip. Both directions are tested.
+- Governance events (`acl.changed`, `role.*`) evict as narrowly as the event
+  allows — resource, member, or whole tenant for `role.deleted` (its members are
+  unknown by then). An eviction that itself fails clears the entire cache, because
+  a cache that cannot be evicted precisely is a correctness risk.
+- 403 rather than 404 for a permission failure: the caller has already proven
+  identity, and the FE needs to tell a permission problem from a missing diff.
 
 ### Hardening
 - Request guards (size caps, structured error mapping), content-/secret-free

@@ -20,11 +20,12 @@ Structurally a sibling of `convert_search_ai` / `folder_actions`: reused
 
 ## Status
 
-**M0 – M3 complete.** Config, auth, dual-identity core access, the plugin
+**M0 – M4 complete.** Config, auth, dual-identity core access, the plugin
 framework and manifest types (M0); the event worker, version-pair resolution, the
 rendition writer and the reconcile sweep (M1); the **PDF plugin** with per-page
-tier degradation (M2); the **3D plugin** across IFC, glTF/GLB and CAD (M3) — all
-validated end-to-end against a live core. Next is M4, the request surface.
+tier degradation (M2); the **3D plugin** across IFC, glTF/GLB and CAD (M3); the
+**request surface** with its READ gate and permission cache (M4) — all validated
+end-to-end against a live core. Remaining: the hardening pass.
 
 ### PDF diffing (M2)
 
@@ -125,9 +126,24 @@ Bumping a plugin's `version` misses the old key and regenerates.
 | POST | `/auth/token` | LDAP bind → bearer token |
 | GET | `/whoami` | resolved identity |
 | GET | `/plugins` | active plugins + versions |
+| GET | `/files/{uid}/diff` | READ-gated diff for a version pair (`version`, `base`) |
+| POST | `/diff/reconcile` | trigger a backfill sweep (tenant admin) |
 
-`GET /files/{uid}/diff` and `POST /diff/reconcile` arrive with the rendition writer
-(M1/M4) — serving them needs stored manifests to serve from.
+`GET /files/{uid}/diff` answers off the manifest status, so the front end has a
+branch for every outcome rather than inferring state from a missing body:
+
+| Status | Code | What the FE does |
+|---|---|---|
+| `ready` | 200 | render — the response carries the manifest + fetchable child references |
+| `pending` | 202 | poll; generation was queued |
+| `failed` | 422 | fall back to a plain side-by-side, with the failure detail |
+| `unsupported` | 200 | flip between the two versions itself (§5.3) — **not** an error |
+| `none` | 200 | a first version has no predecessor; stop polling |
+
+It does **not** block while computing: a BIM or PDF diff takes tens of seconds, so
+holding the request open would tie up a worker and time out at the proxy. The child
+bytes are served by the ordinary file surface — they are hidden children of the
+source file and inherit its ACLs.
 
 The unauthenticated monitoring endpoints bind **loopback-only** and honour
 `FILEENGINE_MONITORING_ALLOW_IPS`.

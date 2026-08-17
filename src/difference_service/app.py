@@ -21,6 +21,9 @@
   state.token_store       TokenStore (bearer tokens issued by /auth/token)
   state.bridge_verifier   BridgeTokenVerifier (accept http_bridge tokens)
   state.registry          PluginRegistry (MIME -> DiffPlugin dispatch)
+  state.permissions       PermissionGate (TTL-bounded READ decisions)
+  state.jobs              JobQueue (on-demand generation + sweeps)
+  state.mime_resolver     factory: CoreClient -> DispatchMimeResolver
 
 ``build_app`` stays pure (no .env side effects) so tests are hermetic; ``create_app``
 loads ``./.env`` first for real launches.
@@ -34,6 +37,8 @@ from fastapi import FastAPI
 from . import __version__
 from .bridge_auth import BridgeTokenVerifier
 from .config import Config
+from .jobs import JobQueue
+from .permissions import PermissionGate
 from .plugins.registry import PluginRegistry, default_registry
 from .token_store import TokenStore
 
@@ -43,7 +48,9 @@ log = logging.getLogger("difference_service.app")
 def build_app(config: Config | None = None, *,
               token_store: TokenStore | None = None,
               bridge_verifier: BridgeTokenVerifier | None = None,
-              registry: PluginRegistry | None = None) -> FastAPI:
+              registry: PluginRegistry | None = None,
+              permissions: PermissionGate | None = None,
+              jobs: JobQueue | None = None) -> FastAPI:
     config = config or Config()
     app = FastAPI(title="difference_service", version=__version__)
 
@@ -95,6 +102,24 @@ def build_app(config: Config | None = None, *,
     app.state.bridge_verifier = bridge_verifier or BridgeTokenVerifier(
         config.bridge_url, config.bridge_introspect_ttl, jwt_secret=config.jwt_secret)
     app.state.registry = registry or default_registry(config)
+    app.state.permissions = permissions or PermissionGate(config.permission_cache_ttl)
+
+    # On-demand generation runs as the WORKER principal, not the caller: the
+    # request is authorized as the user before it is queued, but the generation
+    # writes renditions and must not depend on that user still being around.
+    def _pipeline_for(tenant: str):
+        from .core_client import CoreClient
+        from .pipeline import DiffPipeline
+        return DiffPipeline(config, app.state.registry, CoreClient(config, tenant))
+
+    app.state.jobs = jobs or JobQueue(_pipeline_for, workers=config.worker_concurrency,
+                                      config=config)
+
+    def _mime_resolver(core):
+        from .mime import DispatchMimeResolver
+        return DispatchMimeResolver(core)
+
+    app.state.mime_resolver = _mime_resolver
 
     from .api import router as api_router
     app.include_router(api_router)

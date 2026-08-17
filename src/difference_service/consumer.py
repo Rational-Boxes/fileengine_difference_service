@@ -48,6 +48,12 @@ log = logging.getLogger("difference_service.consumer")
 #: Event types the worker acts on. Everything else is acked untouched.
 HANDLED = ("file.updated", "file.deleted")
 
+#: Governance events that invalidate cached READ decisions (§2, M4). They change
+#: *effective* access, so a cached "allow" outlives the grant that justified it
+#: until one of these arrives — the TTL alone would leave a revoked permission
+#: working for its full window.
+GOVERNANCE = ("acl.changed", "role.assigned", "role.member_removed", "role.deleted")
+
 #: How many recent event ids to remember for in-process dedupe. This is only an
 #: optimisation — the durable guard is the stored manifest — so a bounded window
 #: is enough and a restart losing it costs one cache-hit run, not correctness.
@@ -57,8 +63,13 @@ _SEEN_MAX = 4096
 class EventConsumer:
     """Dispatches recognized events to the diff pipeline."""
 
-    def __init__(self, config: Config, registry=None, *, pipeline_factory=None):
+    def __init__(self, config: Config, registry=None, *, pipeline_factory=None,
+                 permissions=None):
         self.config = config
+        #: Optional PermissionGate to evict on governance events. The worker and
+        #: the API share one in a combined process; when the worker runs alone
+        #: there is no cache to evict and this stays None.
+        self.permissions = permissions
         self.registry = registry if registry is not None else default_registry(config)
         # A pipeline per tenant: the shared stream is multi-tenant, and every core
         # operation must run in the event's tenant, not one fixed at startup.
@@ -96,6 +107,10 @@ class EventConsumer:
         etype = event.get("type") or ""
         event_id = event.get("event_id") or ""
         file_uid = event.get("file_uid") or ""
+
+        if etype in GOVERNANCE:
+            self._invalidate(etype, event)
+            return True
 
         if etype not in HANDLED:
             return True
@@ -147,6 +162,40 @@ class EventConsumer:
         log.info("event %s: %s %s (%s -> %s)", event_id, report.outcome,
                  file_uid, report.base, report.target)
         return True
+
+    # --------------------------------------------------------- governance
+    def _invalidate(self, etype: str, event: dict) -> None:
+        """Evict cached READ decisions a governance event invalidates.
+
+        Scoped as narrowly as the event allows: ``acl.changed`` names a resource,
+        the role events name a member, and ``role.deleted`` names neither (its
+        members are unknown by then) so the whole tenant is dropped. Erring wider
+        costs a few extra core round trips; erring narrower serves access that has
+        been revoked."""
+        gate = self.permissions
+        if gate is None:
+            return
+        tenant = event.get("tenant") or "default"
+        try:
+            if etype == "acl.changed":
+                gate.invalidate_resource(tenant, event.get("file_uid") or "")
+            elif etype in ("role.assigned", "role.member_removed"):
+                member = event.get("member") or ""
+                if member:
+                    gate.invalidate_member(tenant, member)
+                else:
+                    gate.invalidate_tenant(tenant)
+            elif etype == "role.deleted":
+                gate.invalidate_tenant(tenant)
+        except Exception:
+            # A cache that cannot be evicted is a correctness risk, so clear it
+            # wholesale rather than carrying on with entries that may be stale.
+            log.warning("permission invalidation failed; clearing the cache",
+                        exc_info=True)
+            try:
+                gate.clear()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------- loop
     def run_forever(self, source: RedisEventSource) -> None:
