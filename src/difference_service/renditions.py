@@ -182,6 +182,29 @@ class DiffRenditionStore:
                             e.name, e.uid, file_uid, exc_info=True)
         return removed
 
+    def prune_keys(self, file_uid: str, drop_keys) -> List[str]:
+        """Remove our children whose key IS in ``drop_keys`` — the inverse of
+        :meth:`prune`, and the one the pipeline wants.
+
+        Naming what to drop rather than what to keep is the safer direction here:
+        a keep-list deletes anything it forgot to mention, which is how every
+        still-valid comparison of an older pair came to be discarded. A drop-list
+        can only remove what it can name."""
+        drop = set(drop_keys or ())
+        if not drop:
+            return []
+        removed: List[str] = []
+        for e in self.children(file_uid):
+            if not is_diff_child(e.name) or key_of(e.name) not in drop:
+                continue
+            try:
+                self.mf.remove(e.uid, tenant=self.tenant)
+                removed.append(e.name)
+            except Exception:
+                log.warning("could not prune superseded diff child %s (%s) of %s",
+                            e.name, e.uid, file_uid, exc_info=True)
+        return removed
+
     def remove_all(self, file_uid: str) -> List[str]:
         """Cascade-remove every diff child of a file (§2.1, on ``file.deleted``).
 

@@ -156,8 +156,8 @@ def test_rerun_is_a_cache_hit(pipeline, text_file):
     assert pipeline.run(uid).outcome == Outcome.CACHED
 
 
-def test_a_new_version_supersedes_and_prunes_the_previous_diff(pipeline, core,
-                                                               identity, config, text_file):
+def test_a_new_version_leaves_the_previous_comparison_intact(pipeline, core,
+                                                             identity, config, text_file):
     import time
     uid = text_file([b"v1\n", b"v2\n"])
     first = pipeline.run(uid)
@@ -171,8 +171,16 @@ def test_a_new_version_supersedes_and_prunes_the_previous_diff(pipeline, core,
 
     names = DiffRenditionStore(core).child_names(uid)
     ours = {n for n in names if is_diff_child(n)}
-    # Only the current pair's children survive — no unbounded history.
-    assert ours == set(second.manifest.expected) | {manifest_name(second.manifest.key)}
+    # BOTH pairs survive against the real store. A pair of versions is immutable,
+    # so the first comparison is still correct and still cheap to serve; and a
+    # comment anchored to it (COMMENTS_ON_DIFFERENCES §2) would otherwise become a
+    # dead end the moment somebody uploaded an unrelated new version.
+    for m in (first.manifest, second.manifest):
+        assert set(m.expected) <= ours
+        assert manifest_name(m.key) in ours
+
+    # And the older pair still answers from cache rather than being recomputed.
+    assert pipeline.run(uid, target=first.target, base=first.base).outcome == Outcome.CACHED
 
 
 def test_first_version_produces_nothing(pipeline, text_file):

@@ -35,7 +35,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from .manifest import Manifest
+from .manifest import Manifest, pair_key
 from .mime import DispatchMimeResolver
 from .plugins.base import DiffStatus, SourceRef
 from .renditions import DiffRenditionStore
@@ -140,7 +140,8 @@ class DiffPipeline:
         manifest = self.store.write_result(
             file_uid, result, base=pair.base, target=pair.target,
             plugin=plugin.name, plugin_version=plugin.version)
-        self._prune_superseded(file_uid, keep=manifest.key)
+        self._prune_superseded(file_uid, pair.base, pair.target,
+                               plugin.name, plugin.version)
 
         outcome = Outcome.FAILED if result.status == DiffStatus.FAILED else Outcome.COMPUTED
         return RunReport(outcome, file_uid=file_uid, base=pair.base, target=pair.target,
@@ -170,17 +171,36 @@ class DiffPipeline:
             SourceRef(uid=file_uid, version=pair.target, data=target_data, mime=mime, name=name),
         )
 
-    def _prune_superseded(self, file_uid: str, keep: str) -> None:
-        """Drop diff children for other keys of this file.
+    def _prune_superseded(self, file_uid: str, base: str, target: str,
+                          plugin: str, plugin_version: int) -> None:
+        """Drop only results that this run genuinely *supersedes*.
 
-        A new version supersedes the previous pair, and a plugin-version bump
-        supersedes the old generation (§6); both show up as a different key. Kept
-        deliberately simple — one current diff per file — rather than retaining a
-        history of pairs that nothing reads and that would grow without bound."""
+        Superseded means the same pair rendered by an older generation of the same
+        plugin (§6) — the new manifest is a better answer to the identical
+        question, so the old one is dead weight.
+
+        A **different pair is not superseded**, and this used to remove those too,
+        on a "one current diff per file" rule. That was wrong twice over. A pair of
+        versions is immutable: once computed, its comparison is correct forever, so
+        discarding it throws away a tens-of-seconds job that can only ever be
+        recomputed to the same bytes. And a comment can be anchored to a pair
+        (COMMENTS_ON_DIFFERENCES §2) — pruning on every new upload would quietly
+        delete what older comments point at, turning them into dead ends.
+
+        Superseded keys are *computed* rather than discovered, since the key is a
+        hash of the tuple: every earlier plugin version for this exact pair.
+        """
+        if plugin_version <= 0:
+            return
+        superseded = {
+            pair_key(file_uid, base, target, plugin, v)
+            for v in range(plugin_version)
+        }
         try:
-            removed = self.store.prune(file_uid, keep_keys={keep})
+            removed = self.store.prune_keys(file_uid, drop_keys=superseded)
             if removed:
-                log.info("pruned %d superseded diff child(ren) of %s", len(removed), file_uid)
+                log.info("pruned %d superseded diff child(ren) of %s (older %s generations)",
+                         len(removed), file_uid, plugin)
         except Exception:
             log.warning("prune failed for %s (result kept)", file_uid, exc_info=True)
 

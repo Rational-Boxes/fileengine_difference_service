@@ -140,6 +140,25 @@ Options, in order of preference:
 Both 1 and 2 should ship with the feature. This is the one place where the
 "comments are cheap" assumption bites.
 
+### 3.1 Pruning was a second, self-inflicted version of the same failure
+
+Writing this up exposed a worse problem than purge, in code that was already
+shipped. `DiffPipeline._prune_superseded` removed the diff children of **every
+key but the one just written** — a deliberate "one current diff per file" rule.
+So an unrelated new upload deleted the stored comparison of an older pair, and
+any comment anchored to it became a dead end without anyone purging anything.
+
+It was also just wasteful. A pair of versions is immutable, so its comparison is
+correct forever and recomputation can only ever reproduce the same bytes — at the
+cost of a job that takes tens of seconds.
+
+Fixed: superseded now means what the word says — **the same pair under an older
+generation of the same plugin**. Those keys are computed directly (the key is a
+hash of the tuple, so every earlier plugin version for the pair is enumerable)
+rather than discovered by elimination. `DiffRenditionStore.prune_keys` names what
+to drop instead of what to keep, because a keep-list deletes everything it forgot
+to mention, which is exactly how this happened.
+
 ---
 
 ## 4. Staleness has two meanings here

@@ -209,14 +209,49 @@ def test_a_plugin_version_bump_regenerates():
     assert plugin.calls == 2
 
 
-def test_superseded_children_are_pruned_on_regeneration():
+def test_an_older_plugin_generation_of_the_same_pair_is_pruned():
+    # A newer differ answering the identical question makes the old rendering dead
+    # weight — that, and only that, is what "superseded" means.
     core, plugin = FakeCore(), Recorder()
     _pipe(core, plugin).run("F")
     plugin.version = 2
     report = _pipe(core, plugin).run("F")
     names = {n for _u, (_p, n) in core.mf.children.items()}
-    # Only the current key's children survive.
     assert names == set(report.manifest.expected) | {manifest_name(report.manifest.key)}
+
+
+def test_a_different_pair_survives_a_newer_comparison():
+    # Versions are immutable, so a computed pair is correct forever: a new upload
+    # must not discard it. Comments can be anchored to a pair, and pruning here
+    # would silently turn those into dead ends — plus recomputing can only ever
+    # reproduce the same bytes, at the cost of a tens-of-seconds job.
+    core = FakeCore(versions=("v2", "v1"))
+    first = _pipe(core, Recorder()).run("F")
+
+    # A third version lands; the newest pair is now v3 -> v2.
+    core._versions = ["v3", "v2", "v1"]
+    core._payloads["v3"] = b"newest"
+    second = _pipe(core, Recorder()).run("F")
+    assert second.manifest.key != first.manifest.key
+
+    names = {n for _u, (_p, n) in core.mf.children.items()}
+    for m in (first.manifest, second.manifest):
+        assert set(m.expected) <= names, "a still-valid comparison was pruned"
+        assert manifest_name(m.key) in names
+
+
+def test_the_surviving_older_pair_is_still_served_from_cache():
+    # The point of keeping it: asking for that pair again does no work.
+    core = FakeCore(versions=("v2", "v1"))
+    _pipe(core, Recorder()).run("F")
+    core._versions = ["v3", "v2", "v1"]
+    core._payloads["v3"] = b"newest"
+    _pipe(core, Recorder()).run("F")
+
+    plugin = Recorder()
+    again = _pipe(core, plugin).run("F", base="v1", target="v2")
+    assert again.outcome == Outcome.CACHED
+    assert plugin.calls == 0
 
 
 # ------------------------------------------------------------- non-outcomes
