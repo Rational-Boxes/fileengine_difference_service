@@ -63,6 +63,11 @@ class DiffMode:
     RASTER = "raster"
     XKT = "xkt"
     MIXED = "mixed"
+    #: A unit that could not be produced at ANY tier. It still occupies its slot in
+    #: the per-unit map so page indices stay aligned with the document — dropping
+    #: it instead would yield a result that looks complete while silently missing a
+    #: page, which reads to a reviewer as "no changes here".
+    UNAVAILABLE = "unavailable"
 
     #: Per-unit tiers, best first. Used to summarize an overall mode.
     TIERS_2D = (VECTOR, HYBRID, RASTER)

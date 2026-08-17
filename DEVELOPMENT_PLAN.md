@@ -1,10 +1,10 @@
 # Difference Service — Development Plan
 
-Status: **M0 + M1 complete** (2026-08-17) — scaffolding, auth, plugin framework,
+Status: **M0 + M1 + M2 complete** (2026-08-17) — scaffolding, auth, plugin framework,
 manifest types, event ingest, version-pair resolution, the rendition writer and the
-reconcile sweep, all validated end-to-end against a live core. A **fixture corpus**
-with documented ground truth is in place for M2/M3. Next: **M2** (the PDF plugin,
-starting with the object-matching spike). Companion:
+reconcile sweep, and the **PDF (2D) plugin** with its per-page tier ladder — all
+validated end-to-end against a live core. A **fixture corpus** with documented
+ground truth backs the matcher. Next: **M3** (the 3D plugin). Companion:
 [`SPECIFICATION.md`](./SPECIFICATION.md).
 
 ## 1. Purpose & scope
@@ -102,7 +102,7 @@ IFC, 7 glTF. Several exist specifically to *fail* a naive implementation:
 (glTF names are not identity). `test_fixtures.py` asserts each pair encodes the
 change it claims — a broken ruler is worse than no ruler.
 
-### M2 — PDF (2D) plugin
+### M2 — PDF (2D) plugin ✅ *(done 2026-08-17)*
 - **Core research spike (do first, highest risk): PDF object-matching key** — no
   stable identity exists, so derive one: global page-alignment pass → position-
   independent per-object signature → LCS over draw-op order (spec §5.1). Low
@@ -117,6 +117,38 @@ change it claims — a broken ruler is worse than no ruler.
   `data-diff-mode`; page correspondence tolerant of insert/delete/reorder.
 - Raster fallback embeds bitmaps in the same layer structure.
 - Finalizes the front-end SVG contract (spec §7).
+
+Notes from the build:
+- **The spike worked as specified.** All three stages earn their place, and the
+  fixture corpus proves each: without global alignment `shifted_page` reports 100%
+  modified; without the LCS `inserted_object` cascades into the trailing objects.
+  Both now report exactly the documented ground truth.
+- **`difflib` is not usable for the LCS.** Its autojunk heuristic discards elements
+  appearing in >1% of a large sequence — on a dense page that is precisely the
+  repeated rules and glyph runs holding an alignment together. A plain O(n·m) LCS
+  with an explicit size cap replaced it; exceeding the cap lowers confidence, which
+  degrades the page rather than hanging the worker.
+- **Confidence must measure comprehension, not change.** Coverage was first divided
+  by the LARGER side, so a two-object page with one honest addition scored 0.67 and
+  a one-object page 0.5 — degrading good diffs to raster for the crime of having
+  something added. It is now divided by the smaller side, which separates "not
+  understood" from "legitimately gained content".
+- **A page is never dropped.** When no tier can render one, an explicit
+  `unavailable` placeholder holds its slot; omitting it yields a result that looks
+  complete while missing a page, which a reviewer reads as "nothing changed here".
+  When *no* page renders, the result is simply `failed` — placeholders for every
+  page would add nothing over the failure detail.
+- **Glyph outlines come from a metric-compatible substitute** (Liberation Sans/
+  Serif/Mono via fontTools) for the non-embedded base-14 fonts. This satisfies the
+  *contract* — the SVG is self-contained paths, no client font is consulted — but
+  differs in typeface fidelity when a document embeds an unusual face. Extracting
+  the embedded font program (FontFile/FontFile2/FontFile3) is the follow-up; until
+  then a page whose text cannot be outlined degrades rather than emitting `<text>`.
+- **Rasterization shells out to poppler's `pdftoppm`** rather than taking a Python
+  binding: pdf2image only wraps the same binary, and PyMuPDF is a heavyweight
+  extra. A missing binary degrades the tier; it never fails the service.
+- The **hybrid tier (2) is not separately implemented** — it currently routes to
+  raster. A half-measure with no independent backend would be a tier in name only.
 
 ### M3 — 3D plugin
 - Per-element ladder: **IFC GlobalId matching → hybrid (GlobalId + boolean on

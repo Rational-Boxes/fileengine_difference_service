@@ -114,6 +114,15 @@ def default_registry(config=None) -> PluginRegistry:
     them."""
     enabled = getattr(config, "enabled_plugins", None) if config is not None else None
     plugins: List[DiffPlugin] = []
+
+    # PDF (M2). Imported lazily: it pulls in pypdf/fontTools, and a deployment that
+    # only diffs 3D should not need the 2D toolchain installed to start.
+    try:
+        from .pdf import PdfDiffPlugin
+        plugins.append(PdfDiffPlugin(config=config))
+    except Exception:                      # toolchain absent -> the type is simply
+        log.info("PDF diff plugin unavailable", exc_info=True)   # unsupported
+
     if enabled and "passthrough-text" in enabled:
         from .passthrough import PassthroughTextPlugin
         plugins.append(PassthroughTextPlugin())

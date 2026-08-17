@@ -20,13 +20,37 @@ Structurally a sibling of `convert_search_ai` / `folder_actions`: reused
 
 ## Status
 
-**M0 + M1 complete.** Config, auth, dual-identity core access, the plugin
+**M0 + M1 + M2 complete.** Config, auth, dual-identity core access, the plugin
 framework and manifest types (M0); the event worker, version-pair resolution, the
-rendition writer and the reconcile sweep (M1) — validated end-to-end against a live
-core. **No real format plugins yet**: PDF is M2 and 3D is M3, so every pair reports
-"unsupported" unless the `passthrough-text` validation plugin is explicitly
-enabled. A **fixture corpus** with documented ground truth is in place for M2/M3
-(see below).
+rendition writer and the reconcile sweep (M1); the **PDF plugin** with per-page
+tier degradation (M2) — all validated end-to-end against a live core. 3D is M3, so
+non-PDF pairs still report "unsupported".
+
+### PDF diffing (M2)
+
+Each page independently takes the best tier its content supports:
+
+| Tier | When | Output |
+|---|---|---|
+| **vector** | page parsed, matcher confident, glyph outlines available | objects tagged `added`/`deleted`/`modified`/`unchanged` |
+| **raster** | scanned/image-only pages, or any page tier 1 disclaims | page bitmaps + a difference mask, same layer structure |
+| **unavailable** | no tier could render the page | placeholder holding the page's slot |
+
+A document with both kinds reports mode `mixed`, which is why the manifest carries
+a per-page map rather than one document-wide mode.
+
+Object identity is *derived*, in the three stages §5.1 prescribes: cancel the
+dominant page translation, sign each object position-independently, then align by
+LCS over draw order. Each defeats a specific failure: without the first, a page
+that shifted reports 100% modified; without the third, one inserted object makes
+every following object read as modified. Where the matcher cannot explain a page,
+it degrades rather than emitting a confidently wrong diff.
+
+Text is emitted as `<path>` glyph outlines, never `<text>`, so a diff renders
+identically on any client. Outlines come from a metric-compatible substitute
+(Liberation via fontTools) for non-embedded base-14 fonts; embedded-font
+extraction is the pending fidelity improvement. Rasterization shells out to
+poppler's `pdftoppm` — absent, the raster tier degrades rather than failing.
 
 Processes — one package, three entry points:
 
