@@ -209,6 +209,11 @@ difference-service                         # :8100
 
 ## Test
 
+For a by-hand pass through the real UI, see
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md) — a step-by-step runbook over the same
+fixtures the automated suite uses. Generate its sample files with
+`python3 tools/export_samples.py`.
+
 ```bash
 pytest                    # hermetic units — no core, LDAP, or redis needed
 DIFF_LIVE_PASSWORD='…' pytest -m live      # against a live core + LDAP

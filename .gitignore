@@ -16,6 +16,11 @@ htmlcov/
 .env.*
 !.env.example
 
+# Generated verification samples (rebuild with tools/export_samples.py). Not
+# committed: they are derived from the fixtures, so committing them would create a
+# second copy able to drift from the corpus the tests actually run against.
+samples/
+
 # Build / dist
 build/
 dist/
