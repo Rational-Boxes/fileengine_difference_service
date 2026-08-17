@@ -31,7 +31,9 @@ raster = ["pdf2image>=1.17", "Pillow>=10.0"]      # M2 — raster fallback tier
 ifc = ["ifcopenshell>=0.7"]                       # M3 — IFC GlobalId matching
 
 [project.scripts]
-difference-service = "difference_service.app:main"
+difference-service = "difference_service.app:main"          # HTTP API (:8100)
+difference-consumer = "difference_service.consumer:main"    # event worker
+difference-reconcile = "difference_service.reconcile:main"  # backfill sweep
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

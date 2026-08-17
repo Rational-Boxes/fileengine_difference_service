@@ -20,11 +20,21 @@ Structurally a sibling of `convert_search_ai` / `folder_actions`: reused
 
 ## Status
 
-**M0 (scaffolding) complete** — config, auth, dual-identity core access, the
-plugin framework, the manifest/cache-key types, and the health/auth HTTP surface,
-with a `@live` harness that passes against a real core + LDAP. **No format plugins
-yet**: every pair currently reports "unsupported", which is the intended M0
-contract. PDF is M2, 3D is M3, and the event worker + rendition writer are M1.
+**M0 + M1 complete.** Config, auth, dual-identity core access, the plugin
+framework and manifest types (M0); the event worker, version-pair resolution, the
+rendition writer and the reconcile sweep (M1) — validated end-to-end against a live
+core. **No real format plugins yet**: PDF is M2 and 3D is M3, so every pair reports
+"unsupported" unless the `passthrough-text` validation plugin is explicitly
+enabled. A **fixture corpus** with documented ground truth is in place for M2/M3
+(see below).
+
+Processes — one package, three entry points:
+
+| Script | Role |
+|---|---|
+| `difference-service` | HTTP API (**:8100**) |
+| `difference-consumer` | event worker — precomputes diffs on `file.updated` |
+| `difference-reconcile` | backfill sweep — missing and stale-plugin results |
 
 ## Permission model
 
@@ -97,6 +107,33 @@ Bumping a plugin's `version` misses the old key and regenerates.
 
 The unauthenticated monitoring endpoints bind **loopback-only** and honour
 `FILEENGINE_MONITORING_ALLOW_IPS`.
+
+## Fixtures
+
+`src/tests/fixtures/` generates version pairs with **documented ground truth** —
+14 PDF, 9 IFC, 7 glTF. They are generated, never committed binaries, so each
+difference is one readable edit and the corpus needs no toolchain to produce.
+
+Several exist specifically to *fail* a naive implementation, and those are the
+interesting ones:
+
+| Fixture | Why it is hard |
+|---|---|
+| `pdf.shifted_page` | every object translated equally — must cancel the global shift, not report 100% modified |
+| `pdf.inserted_object` | a mid-stream insert must not re-flow the trailing objects into "modified" |
+| `pdf.moved_object` / `relocated_object` | bracket the displacement threshold: modified vs deleted+added |
+| `pdf.mixed_tier` | vector page + scanned page in one document → mode `mixed` |
+| `ifc.property_only` | a property change has **no visual delta** — must not paint orange |
+| `ifc.reordered_entities` | STEP entity numbers are not identity; only GlobalId is |
+| `gltf.renamed_node` | glTF names are not identity — renaming must not read as delete+add |
+
+```python
+from tests.fixtures import pdf, ifc, gltf
+before, after = pdf.inserted_object_pair()
+```
+
+`test_fixtures.py` asserts every pair actually encodes the change it claims — a
+broken ruler is worse than no ruler.
 
 ## Run (dev)
 

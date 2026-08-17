@@ -1,9 +1,11 @@
 # Difference Service — Development Plan
 
-Status: **M0 complete** (2026-08-17) — scaffolding, auth, plugin framework and the
-manifest types are in, with a `@live` harness passing against a real core + LDAP.
-No format plugins yet. Next: **M1** (event ingest, version-pair resolution,
-rendition writer). Companion: [`SPECIFICATION.md`](./SPECIFICATION.md).
+Status: **M0 + M1 complete** (2026-08-17) — scaffolding, auth, plugin framework,
+manifest types, event ingest, version-pair resolution, the rendition writer and the
+reconcile sweep, all validated end-to-end against a live core. A **fixture corpus**
+with documented ground truth is in place for M2/M3. Next: **M2** (the PDF plugin,
+starting with the object-matching spike). Companion:
+[`SPECIFICATION.md`](./SPECIFICATION.md).
 
 ## 1. Purpose & scope
 
@@ -59,7 +61,7 @@ Notes from the build:
   so a permission result for an admin proves nothing about the ACL. Fail-closed
   behaviour must be tested against an unreachable core, not a bogus UID.
 
-### M1 — Event ingest, versioning & rendition writer
+### M1 — Event ingest, versioning & rendition writer ✅ *(done 2026-08-17)*
 - Event consumer on `fileengine:events`: act on `file.updated`, ignore
   `is_rendition`, cascade-delete diff renditions on `file.deleted`.
 - Idempotency (dedupe `event_id`; collapse `(file_uid, target_version)`).
@@ -71,6 +73,34 @@ Notes from the build:
   `version` bump; a fully-failed run still writes a `status: "failed"` manifest.
 - **Reconcile sweep** — backfill missing / stale-plugin renditions.
 - Validated with a trivial pass-through plugin (no real diff yet).
+
+Notes from the build:
+- **The manifest is the idempotency record**, so there is still no database. A
+  complete, non-stale manifest for the pair *is* the cache hit; event-id dedupe in
+  the consumer is only an optimisation in front of it.
+- **MIME needed its own dispatch policy.** The `MimeResolver` copied from
+  `folder_actions` sniffs content only and ignores the file name — correct there,
+  where MIME is a security whitelist that must fail closed against a renamed file.
+  Here MIME picks a *plugin*, so `DispatchMimeResolver` adds the name fallback;
+  without it every `text/plain` file resolved to `None` and reported "unsupported".
+- **Version ordering was verified against a live core, not the docstring:**
+  `revisions()` is newest-first and `get(back=N)` reads `revisions[N]`, so a larger
+  index is an OLDER version. Getting this backwards silently reverses a diff.
+- One current diff is kept per file; a new version or a plugin-version bump changes
+  the key and the superseded children are pruned, rather than accumulating an
+  unbounded history of pairs that nothing reads.
+
+### Fixture corpus *(added 2026-08-17)*
+
+`src/tests/fixtures/` generates version pairs with **documented ground truth** for
+M2/M3 — programmatically, never as committed binaries, so each difference is one
+readable edit and the corpus needs no toolchain to produce. 30 pairs: 14 PDF, 9
+IFC, 7 glTF. Several exist specifically to *fail* a naive implementation:
+`pdf.shifted_page` (whole-page translation must not read as 100% modified),
+`pdf.inserted_object` (a mid-stream insert must not re-flow the trailing objects),
+`ifc.property_only` (a property change has NO visual delta), `gltf.renamed_node`
+(glTF names are not identity). `test_fixtures.py` asserts each pair encodes the
+change it claims — a broken ruler is worse than no ruler.
 
 ### M2 — PDF (2D) plugin
 - **Core research spike (do first, highest risk): PDF object-matching key** — no

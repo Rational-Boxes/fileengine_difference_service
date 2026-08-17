@@ -104,9 +104,17 @@ class PluginRegistry:
 def default_registry(config=None) -> PluginRegistry:
     """The standard plugin set.
 
-    M0 ships the framework only — the PDF (M2) and 3D (M3) plugins register here
-    as they land, most specific first. An empty registry is a valid, working
-    service: every pair simply reports "unsupported", which is exactly the M0
-    contract."""
+    The PDF (M2) and 3D (M3) plugins register here as they land, most specific
+    first. An empty registry is a valid, working service: every pair reports
+    "unsupported", which is exactly the M0/M1 contract.
+
+    ``passthrough-text`` is a validation aid, not a product feature, so it is
+    included ONLY when a deployment names it in ``DIFF_ENABLED_PLUGINS`` —
+    production must not start diffing text files just because nothing else claims
+    them."""
     enabled = getattr(config, "enabled_plugins", None) if config is not None else None
-    return PluginRegistry([], enabled=enabled)
+    plugins: List[DiffPlugin] = []
+    if enabled and "passthrough-text" in enabled:
+        from .passthrough import PassthroughTextPlugin
+        plugins.append(PassthroughTextPlugin())
+    return PluginRegistry(plugins, enabled=enabled)

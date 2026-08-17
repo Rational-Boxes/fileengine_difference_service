@@ -124,6 +124,11 @@ class Config:
         self.events_stream = _env("FILEENGINE_EVENTS_STREAM", "fileengine:events")  # SHARED
         self.events_group = _env("DIFF_EVENTS_GROUP", "difference_service")         # PRIVATE
         self.consumer_name = _env("DIFF_CONSUMER_NAME", "worker-1")
+        # Reconcile sweep: 0 = one-shot (run once and exit), else loop at this
+        # interval. The sweep backfills missing diffs and, after a plugin version
+        # bump, regenerates every stale one (§6).
+        self.reconcile_interval_s = _int("DIFF_RECONCILE_INTERVAL_S", 0)
+        self.reconcile_max_files = _int("DIFF_RECONCILE_MAX_FILES", 0)
 
         # --- Worker / plugin tuning (PRIVATE) ---
         self.worker_concurrency = _int("DIFF_WORKER_CONCURRENCY", 2)
