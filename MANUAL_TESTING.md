@@ -109,6 +109,9 @@ Do this once on `pdf-inserted_object.pdf` to learn the controls.
 The reason this exists: at fit-width a large sheet's dimension text is a few
 pixels tall, so a changed callout is *visible* but not *readable*.
 
+0. **Check first:** the WHOLE page is visible — top and bottom — without touching
+   any scrollbar. A portrait sheet is taller than the window once laid out at the
+   window's width, and "fit" has to mean the whole page, not just its width.
 1. Scroll the wheel over the page. **Check:** it zooms, and the point under the
    cursor stays put — it should feel like moving a magnifier over the sheet, not
    like scrolling a picture.
@@ -121,7 +124,8 @@ pixels tall, so a changed callout is *visible* but not *readable*.
    comparison is re-rendered at the new scale, not magnified. If it goes blocky
    on a `vector` page, the tier badge is lying or the transform is wrong.
    (A `scanned` page *will* go blocky; that one is genuinely pixels.)
-5. Try to zoom out below 100%. **Check:** it stops at the whole page.
+5. Try to zoom out below 100%. **Check:** it stops at the whole page — 100% means
+   the whole page, so there is nothing further to reveal by shrinking it.
 6. Step to the next page. **Check:** the zoom is **kept** — checking the same
    detail across sheets should not mean zooming back in each time.
 7. Double-click, or click **Fit**. **Check:** back to the whole page.
@@ -149,10 +153,17 @@ pixels tall, so a changed callout is *visible* but not *readable*.
 6. **Check:** you land on **the same pair, the same page, the same view, and the
    same zoom and pan** — pointing at the detail, not at the sheet. This is the
    whole point: on a B1 drawing, "page 3, difference" is not a location.
-7. **Check:** the thread offers **no** 🎯 View or ⬇ BCF buttons. Those need a 3D
+7. With the comparison showing, find a **plain** comment (one made on the
+   document, with no comparison attached). **Check:** it offers **📄 View
+   document**, and clicking it puts the document back — a plain comment is about
+   the document, so activating one takes you there, exactly as activating a
+   model comment in the 3D viewer takes you back to the model.
+8. **Check:** on the plain document, no comment shows *📄 View document* — there
+   would be nothing to go back to.
+9. **Check:** the thread offers **no** 🎯 View or ⬇ BCF buttons. Those need a 3D
    viewpoint; a BCF export of a PDF comparison would produce a file nothing can
    open.
-8. Upload a further version of the file. Reopen the comment and click **🔀 View
+10. Upload a further version of the file. Reopen the comment and click **🔀 View
    comparison** again. **Check:** it still restores the *original* pair. A pair of
    versions is immutable, so its comparison is valid forever — a new upload must
    not disturb it, and must not have deleted it either (that regression is
