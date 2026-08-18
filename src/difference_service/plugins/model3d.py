@@ -136,6 +136,16 @@ class Model3D:
     """A parsed model, normalized away from its source format."""
     elements: List[Element3D] = field(default_factory=list)
     source_format: str = ""
+    #: Which axis points up in `elements`' coordinates: "y" or "z".
+    #:
+    #: glTF DEFINES +Y as up, and the comparison is written out as a glTF, so
+    #: anything already parsed from one (including CAD, which is tessellated to
+    #: glTF first) needs no conversion. IFC is the exception: it is Z-up, and
+    #: writing its coordinates into a glTF unchanged declares them to be Y-up —
+    #: which is exactly how the comparison came out rotated 90° from the model
+    #: the viewer shows for the same file. Carried here rather than inferred from
+    #: source_format so a future loader has to state its own convention.
+    up_axis: str = "y"
     #: Reasons the load was incomplete; lowers confidence rather than failing.
     problems: List[str] = field(default_factory=list)
 
@@ -214,6 +224,9 @@ class ModelDelta:
     """The full comparison of two models."""
     deltas: List[ElementDelta] = field(default_factory=list)
     tier: str = Tier.NONE
+    #: Up axis of the geometry in `deltas`, taken from the models compared. The
+    #: writer needs it to orient the output; see Model3D.up_axis.
+    up_axis: str = "y"
     matched: int = 0
     confidence: float = 1.0
 
@@ -241,6 +254,10 @@ def match_models(old: Model3D, new: Model3D) -> ModelDelta:
     else:
         delta = _match_by_geometry(old, new)
     delta.confidence = _confidence(old, new, delta)
+    # The comparison inherits the geometry's orientation. Both sides are the same
+    # file in two versions, so they share a convention; prefer the new side and
+    # fall back to the old in case one failed to load.
+    delta.up_axis = new.up_axis or old.up_axis
     return delta
 
 

@@ -206,8 +206,19 @@ def test_the_merged_gltf_groups_every_element():
     import struct
     length = struct.unpack("<I", glb[12:16])[0]
     doc = json.loads(glb[20:20 + length].decode("utf-8"))
-    groups = [n for n in doc["nodes"] if "children" in n]
+    # The three layers must be present and in order. Not "the only nodes with
+    # children": an IFC comparison also hangs them under a root that turns Z-up
+    # geometry into the +Y-up glTF declares (see test_xkt_orientation.py), and
+    # asserting the absence of any other parent would fail for the orientation
+    # being correct.
+    groups = [n for n in doc["nodes"]
+              if "children" in n and n["name"] in (GROUP_OLD, GROUP_NEW, GROUP_DIFFERENCE)]
     assert [g["name"] for g in groups] == [GROUP_OLD, GROUP_NEW, GROUP_DIFFERENCE]
+
+    # ...and this IS an IFC source, so it must be oriented.
+    roots = [doc["nodes"][i] for i in doc["scenes"][0]["nodes"]]
+    assert len(roots) == 1 and "rotation" in roots[0], \
+        "an IFC comparison must be turned from Z-up to glTF's Y-up"
     # The old and new layers must each be a COMPLETE model, or a "before" view
     # would show only what was deleted.
     by_name = {g["name"]: g for g in groups}
