@@ -257,6 +257,29 @@ A wall's fire rating changed. Its geometry did not.
 
 ---
 
+### 5.7 One model, one conversation
+
+A comparison of two versions is not a separate model — it is the same model shown
+differently, under the same file, sharing that file's comments.
+
+1. Open an IFC in the 3D viewer. **Check:** the title bar offers
+   **🔀 Compare versions**, with a `Before → After` picker.
+2. Compare two versions. **Check:** the comparison loads **in the same window**,
+   the chip reads *🔀 Comparison*, and the comment panel beside it still shows
+   the model's existing comments — not an empty list.
+3. Frame something changed, select an object, x-ray a few others, then comment.
+4. Click **← Back to the model**. **Check:** the plain model returns, and your new
+   comment is **still in the list** alongside every other comment on this file.
+5. Click **🎯 View** on that comment. **Check:** the viewer **loads the comparison
+   again** and restores the full view — camera, selection and x-ray as you left
+   them. It should not try to apply the view to the plain model.
+6. Click **🎯 View** on a comment made on the *plain* model. **Check:** the viewer
+   switches back to the plain model and restores that view.
+7. **Check:** older comments made before comparisons existed still restore against
+   the plain model — no recorded source means the model itself.
+
+---
+
 ## 6. 3D — glTF and CAD (no stable identity)
 
 | # | File | Expected |
