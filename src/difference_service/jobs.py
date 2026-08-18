@@ -66,6 +66,17 @@ class JobQueue:
         #: Purely for observability — what the last run of each key decided.
         self._last: Dict[Tuple[str, str, str, str], str] = {}
 
+    # ---------------------------------------------------------- observability
+    def stats(self) -> Dict[str, int]:
+        """Queue depth and capacity, for the metrics endpoint.
+
+        `pending` climbing toward `max_pending` is the saturation signal: once it
+        is full, submissions are refused rather than queued, so a scraper sees
+        the pressure before work starts being dropped.
+        """
+        with self._lock:
+            return {"pending": len(self._pending), "max_pending": self._max_pending}
+
     # ------------------------------------------------------------ submission
     def submit(self, tenant: str, file_uid: str, target: str = "",
                base: str = "") -> bool:

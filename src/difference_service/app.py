@@ -79,11 +79,40 @@ def build_app(config: Config | None = None, *,
 
     @app.middleware("http")
     async def _guard_monitoring(request, call_next):
-        if _monitor_allow and request.url.path in {"/healthz", "/readyz", "/poolz"}:
+        if _monitor_allow and request.url.path in {"/healthz", "/readyz", "/poolz", "/metrics"}:
             client = request.client.host if request.client else ""
             if client not in _monitor_allow:
                 return _JSONResponse({"error": "forbidden"}, status_code=403)
         return await call_next(request)
+
+    # Prometheus scrape endpoint. Guarded by the same allowlist as the other
+    # monitoring routes (see the middleware above).
+    from . import metrics as _metrics
+
+    def _service_metrics(m: "_metrics.Metrics") -> None:
+        jobs = getattr(app.state, "jobs", None)
+        if jobs is not None and hasattr(jobs, "stats"):
+            js = jobs.stats()
+            m.gauge("fileengine_diff_jobs_pending",
+                    "Comparisons queued for generation", js.get("pending", 0))
+            m.gauge("fileengine_diff_jobs_max_pending",
+                    "Queue capacity; submissions are refused once pending reaches it",
+                    js.get("max_pending", 0))
+            cap = js.get("max_pending", 0)
+            m.gauge("fileengine_diff_jobs_utilization",
+                    "pending / max_pending, as a ratio. The saturation signal",
+                    (js.get("pending", 0) / cap) if cap else 0.0)
+        registry = getattr(app.state, "registry", None)
+        if registry is not None:
+            try:
+                m.gauge("fileengine_diff_plugins",
+                        "Difference plugins registered for MIME dispatch",
+                        len(list(registry.plugins())))
+            except Exception:  # noqa: BLE001 - a registry without plugins() is not fatal
+                pass
+
+    _metrics.install(app, "difference_service", [_service_metrics],
+                     {"version": getattr(config, "version", "") or "0.1.0"})
 
     # Browser CORS for a SPA on another origin (off unless DIFF_CORS_ORIGINS set).
     # Explicit origins (never "*") so credentialed bearer + X-Tenant requests work.
