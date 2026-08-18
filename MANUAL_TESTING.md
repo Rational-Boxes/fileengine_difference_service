@@ -125,6 +125,17 @@ pixels tall, so a changed callout is *visible* but not *readable*.
 6. Step to the next page. **Check:** the zoom is **kept** — checking the same
    detail across sheets should not mean zooming back in each time.
 7. Double-click, or click **Fit**. **Check:** back to the whole page.
+8. Zoom in and look at the **top-left of the page area**. **Check:** a small
+   whole-page mini-map appears, with a box marking the part you are looking at —
+   the same navigator the image preview uses.
+9. Click somewhere else on the mini-map. **Check:** the view jumps there, centred.
+   Drag across the map. **Check:** the page follows continuously, and the box
+   cannot be dragged off the edge of the map.
+10. Switch between **Before / After / Difference**. **Check:** the mini-map shows
+    the same view as the page — you should always be navigating what you are
+    looking at.
+11. Click **Fit**. **Check:** the mini-map disappears. With the whole page on
+    screen there is nothing to navigate to.
 
 ### 2.2 Commenting on a comparison
 
