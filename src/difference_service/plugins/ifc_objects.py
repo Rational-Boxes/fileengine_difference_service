@@ -82,7 +82,8 @@ def _properties_of(product) -> Dict[str, str]:
 
 def parse_ifc(data: bytes) -> Model3D:
     """Parse IFC bytes into the shared model. Never raises."""
-    model = Model3D(source_format="ifc")
+    # IFC is Z-up (IfcAxis2Placement3D's default axis), unlike glTF's +Y.
+    model = Model3D(source_format="ifc", up_axis="z")
     try:
         import ifcopenshell
     except Exception:

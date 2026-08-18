@@ -152,10 +152,29 @@ def build_merged_gltf(delta: ModelDelta) -> Optional[bytes]:
         nodes.append({"name": group, "children": group_children[group]})
         group_nodes.append(len(nodes) - 1)
 
+    # glTF DEFINES +Y as up. Z-up geometry (IFC) written in unchanged is therefore
+    # declared to be something it is not, and the viewer renders the comparison
+    # rotated 90° from the model it shows for the same file — which is exactly the
+    # anomaly this fixes.
+    #
+    # Corrected with ONE root node rather than by rewriting every vertex: the
+    # element coordinates stay identical to what the matcher compared, so nothing
+    # about which elements pair up can shift as a side effect of orienting the
+    # output. -90° about X takes (x, y, z) to (x, z, -y), so +Z becomes +Y.
+    scene_roots = group_nodes
+    if (delta.up_axis or "y").lower() == "z":
+        nodes.append({
+            "name": "z-up-to-y-up",
+            "children": group_nodes,
+            # Quaternion [x, y, z, w] for -90° about X.
+            "rotation": [-0.7071067811865476, 0.0, 0.0, 0.7071067811865476],
+        })
+        scene_roots = [len(nodes) - 1]
+
     gltf = {
         "asset": {"version": "2.0", "generator": "difference_service"},
         "scene": 0,
-        "scenes": [{"nodes": group_nodes}],
+        "scenes": [{"nodes": scene_roots}],
         "nodes": nodes,
         "meshes": meshes,
         "accessors": accessors,
