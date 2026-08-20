@@ -137,9 +137,16 @@ class DiffPipeline:
         plugin, result = self.registry.diff(base_ref, target_ref)
 
         # 6) Commit, then drop superseded results for this file.
-        manifest = self.store.write_result(
-            file_uid, result, base=pair.base, target=pair.target,
-            plugin=plugin.name, plugin_version=plugin.version)
+        #
+        # `with`: a file-backed child owns a temp file that deliberately
+        # outlives the plugin's own temp dir (see plugins.base.DiffChild).
+        # Nothing else deletes it, so every exit from here — including a raised
+        # write — has to release them or the disk fills up one comparison at a
+        # time.
+        with result:
+            manifest = self.store.write_result(
+                file_uid, result, base=pair.base, target=pair.target,
+                plugin=plugin.name, plugin_version=plugin.version)
         self._prune_superseded(file_uid, pair.base, pair.target,
                                plugin.name, plugin.version)
 
