@@ -44,7 +44,7 @@ from .base import (
     DiffChild, DiffMode, DiffPlugin, DiffResult, SourceRef,
 )
 from .model3d import Model3D, ModelDelta, match_models
-from .xkt import build_merged_gltf, build_metamodel, gltf_to_xkt
+from .xkt import build_merged_gltf, build_metamodel, gltf_to_xkt, gltf_to_xkt_file
 
 log = logging.getLogger("difference_service.plugins.three_d")
 
@@ -140,11 +140,14 @@ class ThreeDDiffPlugin(DiffPlugin):
         metamodel = build_metamodel(delta)
 
         children: List[DiffChild] = []
-        xkt = gltf_to_xkt(merged, metamodel, binary=self.convert2xkt)
-        if xkt:
-            children.append(DiffChild(kind="model", index=0, data=xkt,
-                                      mime="application/octet-stream", ext="xkt",
-                                      mode=DiffMode.XKT))
+        # File-backed: the XKT is the largest thing produced here, and the
+        # writer streams it (plugins.base.DiffChild).
+        kept = gltf_to_xkt_file(merged, metamodel, binary=self.convert2xkt)
+        if kept:
+            xkt_path, cleanup = kept
+            children.append(DiffChild.from_path("model", 0, xkt_path,
+                                                "application/octet-stream", "xkt",
+                                                mode=DiffMode.XKT, cleanup=cleanup))
         else:
             # convert2xkt is a Node tool and may simply not be installed. The
             # merged glTF is still a complete, viewable three-group model, so

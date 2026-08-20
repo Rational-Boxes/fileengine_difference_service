@@ -262,7 +262,31 @@ def build_metamodel(delta: ModelDelta, *, project_id: str = "diff") -> dict:
 
 def gltf_to_xkt(glb: bytes, metamodel: Optional[dict] = None, *,
                 binary: str = "convert2xkt", timeout_s: int = 300) -> Optional[bytes]:
-    """Run ``convert2xkt`` over a merged GLB. ``None`` if unavailable or it fails."""
+    """Run ``convert2xkt`` over a merged GLB. ``None`` if unavailable or it fails.
+
+    Bytes form, kept for callers that want one buffer. Prefer
+    :func:`gltf_to_xkt_file` where the result is only going to be written out.
+    """
+    kept = gltf_to_xkt_file(glb, metamodel, binary=binary, timeout_s=timeout_s)
+    if not kept:
+        return None
+    path, cleanup = kept
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    finally:
+        cleanup()
+
+
+def gltf_to_xkt_file(glb: bytes, metamodel: Optional[dict] = None, *,
+                     binary: str = "convert2xkt", timeout_s: int = 300):
+    """As above, but hands back ``(path, cleanup)``.
+
+    The XKT for a large model is the biggest artifact this service produces and
+    it is already a file when convert2xkt finishes. Keeping it as one — and
+    letting the rendition writer stream it — avoids holding the whole model just
+    to pass it along. The caller owns the file (plugins.base.DiffChild).
+    """
     if not convert2xkt_available(binary) or not glb:
         return None
 
@@ -286,5 +310,13 @@ def gltf_to_xkt(glb: bytes, metamodel: Optional[dict] = None, *,
             log.info("convert2xkt produced no output: %s",
                      (proc.stderr or proc.stdout or b"")[:300])
             return None
-        with open(out, "rb") as fh:
-            return fh.read()
+        # Move it out of the TemporaryDirectory, which is about to be removed,
+        # into a holder the caller releases.
+        holder = tempfile.mkdtemp(prefix="diffsvc-xkt-out-")
+        dest = os.path.join(holder, "merged.xkt")
+        try:
+            shutil.move(out, dest)
+        except OSError:
+            shutil.rmtree(holder, ignore_errors=True)
+            return None
+        return dest, lambda: shutil.rmtree(holder, ignore_errors=True)

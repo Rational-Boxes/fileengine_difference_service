@@ -152,7 +152,10 @@ class DiffRenditionStore:
             # ONE gRPC message, which the channel limit refuses outright. The
             # payload is already in memory here, so this bounds the wire rather
             # than the heap -- making the plugins stream is separate work.
-            self.mf.put_stream(uid, [child.data], tenant=self.tenant)
+            # chunks() streams from wherever the payload lives -- memory for a
+            # per-page SVG, the plugin's output file for an XKT -- so a large
+            # child is never held whole on the way out.
+            self.mf.put_stream(uid, child.chunks(), tenant=self.tenant)
 
         # 2) The manifest, last — this is the commit.
         mname = manifest_name(key)

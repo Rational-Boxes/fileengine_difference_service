@@ -32,9 +32,10 @@ Two levels of vocabulary, kept deliberately separate:
 """
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Callable, Iterator, List, Optional
 
 
 # --- vocabulary -------------------------------------------------------------
@@ -100,22 +101,76 @@ class SourceRef:
 
 # --- outputs ----------------------------------------------------------------
 
+#: Bytes read from a file-backed child at a time.
+CHILD_CHUNK = 4 * 1024 * 1024
+
+
 @dataclass
 class DiffChild:
     """One stored child of the result — a per-page SVG (2D) or the XKT (3D).
 
     ``index`` orders the children within a result and is what the manifest's
-    per-unit map keys on; for a single-child 3D result it is 0."""
+    per-unit map keys on; for a single-child 3D result it is 0.
+
+    The payload lives **either** in memory (``data``) or on disk (``path``). A
+    per-page SVG is small and belongs in memory; an XKT carrying old/new/
+    difference layers for a large model does not — the plugin already wrote it
+    as a file, and reading it back just to hand it to a streaming writer holds
+    the whole model for no reason.
+
+    **Ownership.** A file-backed child owns its file: the producing plugin's
+    temp dir is gone by the time anyone reads it, so the file is moved somewhere
+    the child controls and ``cleanup`` releases it. Whoever consumes a
+    :class:`DiffResult` must ``close()`` it, or the files leak."""
     kind: str                # "page" (2D) | "model" (3D)
     index: int
-    data: bytes
-    mime: str
-    ext: str
+    data: Optional[bytes] = None
+    mime: str = ""
+    ext: str = ""
     mode: str = DiffMode.VECTOR   # the tier THIS unit achieved
+    path: Optional[str] = None
+    cleanup: Optional[Callable[[], None]] = None
+
+    @classmethod
+    def from_path(cls, kind: str, index: int, path: str, mime: str, ext: str,
+                  mode: str = DiffMode.VECTOR,
+                  cleanup: Optional[Callable[[], None]] = None) -> "DiffChild":
+        return cls(kind=kind, index=index, data=None, mime=mime, ext=ext,
+                   mode=mode, path=path, cleanup=cleanup)
 
     @property
     def size(self) -> int:
+        if self.path is not None:
+            try:
+                return os.path.getsize(self.path)
+            except OSError:
+                return 0
         return len(self.data or b"")
+
+    def chunks(self, size: int = CHILD_CHUNK) -> Iterator[bytes]:
+        """Yield the payload in bounded pieces, from wherever it lives."""
+        if self.path is not None:
+            with open(self.path, "rb") as f:
+                while True:
+                    piece = f.read(size)
+                    if not piece:
+                        return
+                    yield piece
+        elif self.data:
+            for start in range(0, len(self.data), size):
+                yield self.data[start:start + size]
+
+    def read(self) -> bytes:
+        """The whole payload, for callers that genuinely need one buffer."""
+        return b"".join(self.chunks())
+
+    def release(self) -> None:
+        if self.cleanup is not None:
+            try:
+                self.cleanup()
+            finally:
+                self.cleanup = None
+                self.path = None
 
 
 @dataclass
@@ -143,6 +198,17 @@ class DiffResult:
     failure: Optional[DiffFailure] = None
     #: Set to override the derived overall mode; normally left to ``mode``.
     overall_mode: Optional[str] = None
+
+    def close(self) -> None:
+        """Release every file-backed child. Safe to call twice."""
+        for c in self.children:
+            c.release()
+
+    def __enter__(self) -> "DiffResult":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     @classmethod
     def failed(cls, stage: str, reason: str = "", tiers: Optional[List[str]] = None) -> "DiffResult":
