@@ -51,6 +51,13 @@ class FakeMF:
         self.children[uid] = (parent, name)
         return uid
 
+    def put_stream(self, uid, chunks, tenant=None, chunk_size=None):
+        # The real client re-splits chunks so no gRPC message is
+        # oversized; a stub only has to reassemble them.
+        joined = b"".join(
+            c.encode() if isinstance(c, str) else bytes(c) for c in chunks)
+        return self.put(uid, joined, tenant=tenant)
+
     def put(self, uid, data, tenant=None):
         self.content[uid] = data
         self.write_order.append(self.children[uid][1])

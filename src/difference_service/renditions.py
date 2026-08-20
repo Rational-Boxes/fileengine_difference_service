@@ -147,7 +147,12 @@ class DiffRenditionStore:
                 continue
             uid = self.mf.touch(file_uid, name, tenant=self.tenant)
             uid = getattr(uid, "uid", uid)
-            self.mf.put(uid, child.data, tenant=self.tenant)
+            # put_stream, not put: a diff child can be large (an XKT with
+            # old/new/difference layers for a big model) and put() sends it in
+            # ONE gRPC message, which the channel limit refuses outright. The
+            # payload is already in memory here, so this bounds the wire rather
+            # than the heap -- making the plugins stream is separate work.
+            self.mf.put_stream(uid, [child.data], tenant=self.tenant)
 
         # 2) The manifest, last — this is the commit.
         mname = manifest_name(key)
@@ -155,7 +160,9 @@ class DiffRenditionStore:
         if not muid:
             muid = self.mf.touch(file_uid, mname, tenant=self.tenant)
             muid = getattr(muid, "uid", muid)
-        self.mf.put(muid, m.to_bytes(), tenant=self.tenant)
+        # Small, but written the same way: which payloads are "small enough"
+        # changes, and a single write path is one fewer thing to get wrong.
+        self.mf.put_stream(muid, [m.to_bytes()], tenant=self.tenant)
         log.info("committed diff %s for %s (%s -> %s, %s v%d, %d children)",
                  key, file_uid, base, target, plugin, plugin_version, len(m.expected))
         return m
