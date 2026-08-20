@@ -148,10 +148,27 @@ class CoreClient:
             return []
 
     def check_permission(self, uid: str, permission: str = "READ") -> bool:
-        """Does this client's identity hold ``permission`` on ``uid``? The READ gate
-        for every request surface (§2). Fails CLOSED — an unreachable core denies."""
+        """May this client's identity reach ``uid`` with ``permission``? The READ
+        gate for every request surface (§2). Fails CLOSED — an unreachable core
+        denies.
+
+        **Existence is part of the answer, and it has to be asked separately.**
+        The core's CheckPermission evaluates ACL rules only, and `AclManager`
+        ships `default_read_ = true`: a principal with no *matching rule* holds
+        READ, and a uid that does not exist (or has been soft-deleted) has no
+        matching rule either — so the bare check returns True for a resource
+        that is not there. Verified against a live core, 2026-08-20.
+
+        That does not grant access to anything protected (real resources keep
+        their rules, and inherited DENY still applies), but it makes the check
+        useless as an "is this reachable" answer, which is how every caller here
+        uses it. Cost: one extra RPC on the *granted* path only — a denial
+        short-circuits before the existence call."""
         try:
-            return bool(self._client().check_permission(uid, permission, tenant=self.tenant))
+            client = self._client()
+            if not client.check_permission(uid, permission, tenant=self.tenant):
+                return False
+            return bool(client.entity_exists(uid))
         except Exception:
             log.warning("permission check failed for %s (%s) — denying",
                         uid, permission, exc_info=True)
