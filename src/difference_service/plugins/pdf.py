@@ -64,7 +64,14 @@ class PdfDiffPlugin(DiffPlugin):
     name = "pdf"
     #: Bump when output would change — it is part of the cache key (§6), so a bump
     #: regenerates every previously stored PDF diff.
-    version = 1
+    #:
+    #: 2: fonttools and the Liberation substitutes are now installed. Every diff
+    #: stored under version 1 was produced where GlyphProvider.available() was
+    #: False for every family, so _tier1_possible() refused tier 1 and the whole
+    #: document came out as a raster comparison. Those results are complete and
+    #: cacheable — nothing marks them as degraded — so only a version bump gets
+    #: them rebuilt as the vector diffs they should always have been.
+    version = 2
 
     MIMES = ("application/pdf", "application/x-pdf")
 
@@ -154,7 +161,7 @@ class PdfDiffPlugin(DiffPlugin):
             return False
         for page in (old, new):
             for obj in page.text_objects:
-                if not glyphs.available(obj.style):
+                if not glyphs.available(obj.font):
                     return False
         return True
 

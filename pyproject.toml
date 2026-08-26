@@ -26,7 +26,14 @@ dev = ["pytest>=7.0", "pytest-cov>=4.0", "httpx>=0.27"]
 # Format plugins land in M2/M3; their toolchains are opt-in extras so the core
 # service installs and runs without any heavy geometry/PDF dependency. A missing
 # backend degrades a tier (SPECIFICATION.md §4) rather than failing the service.
-pdf = ["pypdf>=4.0", "pdfplumber>=0.11"]          # M2 — vector/text extraction
+# fonttools is NOT optional and does NOT come with pypdf, despite the comment in
+# registry.py that assumed it did. pdf_glyphs imports fontTools to outline text
+# into paths, which is the no-client-fonts contract; without it
+# GlyphProvider.available() returns False for EVERY style, _tier1_possible()
+# refuses tier 1 before any matching happens, and the whole document silently
+# degrades to a raster diff. It only ever worked where something else had
+# already pulled fonttools in.
+pdf = ["pypdf>=4.0", "pdfplumber>=0.11", "fonttools>=4.0"]   # M2 — vector/text extraction
 raster = ["pdf2image>=1.17", "Pillow>=10.0"]      # M2 — raster fallback tier
 ifc = ["ifcopenshell>=0.7"]                       # M3 — IFC GlobalId matching
 
