@@ -34,9 +34,12 @@ confidence rather than producing a confidently wrong object — see ``PageParse`
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
+
+log = logging.getLogger("difference_service.plugins.pdf_objects")
 
 #: Rounding for coordinates when building signatures/keys, in PDF units (1/72").
 #: Coarse enough to absorb float noise, fine enough not to merge distinct objects.
@@ -83,6 +86,7 @@ class PageObject:
     y: float = 0.0                # ...in PDF user space
     style: str = ""               # rendered attributes compared for "modified"
     text: str = ""                # the string, for text runs (diagnostics/SVG)
+    font: str = ""                # BaseFont of a text run, e.g. "Arial-BoldMT"
     size: float = 0.0             # font size, for text runs
     points: List[Tuple[float, float]] = field(default_factory=list)  # path geometry
     ops: List[str] = field(default_factory=list)                     # raw operators
@@ -182,6 +186,40 @@ class _State:
         return s
 
 
+def _base_fonts(page) -> Dict[str, str]:
+    """Map each ``Tf`` font *resource* name to the BaseFont behind it.
+
+    ``Tf``'s operand is a resource name (``/F1``) that is local to the page and
+    says nothing about the typeface — two revisions of the same document
+    routinely number the same font differently, and a name like ``/TT2`` carries
+    no information at all. The BaseFont (``ABCDEF+Arial-BoldMT``) is what the
+    substitute mapping in ``pdf_glyphs`` needs, and it is also the more stable
+    identity for a run's signature: keying on the resource name reports a text
+    run as *modified* purely because the writer renumbered its font resources.
+
+    Best-effort by design — an unreadable resource dictionary leaves the run with
+    its resource name, which is exactly the behaviour that predated this."""
+    out: Dict[str, str] = {}
+    try:
+        res = page.get("/Resources")
+        res = res.get_object() if hasattr(res, "get_object") else res
+        fonts = res.get("/Font") if res else None
+        fonts = fonts.get_object() if hasattr(fonts, "get_object") else fonts
+        if not fonts:
+            return out
+        for name, ref in fonts.items():
+            try:
+                fd = ref.get_object() if hasattr(ref, "get_object") else ref
+                base = str(fd.get("/BaseFont") or "").lstrip("/")
+                if base:
+                    out[str(name).lstrip("/")] = base
+            except Exception:
+                continue
+    except Exception:
+        log.debug("could not read page font resources", exc_info=True)
+    return out
+
+
 def parse_page(page, reader=None) -> PageParse:
     """Extract the drawable objects of one pypdf page.
 
@@ -204,6 +242,7 @@ def parse_page(page, reader=None) -> PageParse:
         out.unknown_ops.append(f"<parse-error:{type(e).__name__}>")
         return out
 
+    base_fonts = _base_fonts(page)
     state = _State()
     stack: List[_State] = []
     current: List[Tuple[float, float]] = []      # in-progress path points
@@ -231,7 +270,8 @@ def parse_page(page, reader=None) -> PageParse:
         elif op == "BT":
             state.tm = state.tlm = IDENTITY
         elif op == "Tf" and len(operands) >= 2:
-            state.font = str(operands[0])
+            res_name = str(operands[0]).lstrip("/")
+            state.font = base_fonts.get(res_name, res_name)
             state.size = _num(operands[1])
         elif op == "TL" and operands:
             state.leading = _num(operands[0])
@@ -259,7 +299,7 @@ def parse_page(page, reader=None) -> PageParse:
                     signature=text_signature(s, size, state.font),
                     x=_q(x), y=_q(y),
                     style=f"fill={state.fill};size={_q(size, _SIZE_BUCKET)}",
-                    text=s, size=size, ops=[op], index=index))
+                    text=s, font=state.font, size=size, ops=[op], index=index))
                 index += 1
             if op in ("'", '"'):
                 state.tlm = mat_mul((1, 0, 0, 1, 0, -state.leading), state.tlm)

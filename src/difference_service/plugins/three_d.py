@@ -59,7 +59,14 @@ class ThreeDDiffPlugin(DiffPlugin):
 
     name = "3d"
     #: Part of the cache key (§6) — bump when output would change.
-    version = 1
+    #:
+    #: 2: ifcopenshell is now installed in the image. Without it parse_ifc returns
+    #: an empty model and diff() ends at DiffResult.failed("parse", ...) — and a
+    #: failed manifest has no children, so Manifest.is_complete() is trivially
+    #: true and the pipeline treats that failure as a permanent cache hit. Every
+    #: IFC pair attempted under version 1 is poisoned in exactly that way, so the
+    #: dependency fix only reaches them via this bump.
+    version = 2
 
     def __init__(self, *, config=None, convert2xkt: str = ""):
         self.config = config

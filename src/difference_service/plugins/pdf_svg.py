@@ -92,7 +92,7 @@ def render_object(obj: PageObject, state: str, glyphs=None) -> Optional[str]:
         if glyphs is None:
             return None
         outline = glyphs.outline_run(obj.text, obj.size or 12.0, obj.x, obj.y,
-                                     font_hint=obj.style)
+                                     font_hint=obj.font)
         if outline is None:
             return None
         # `fill` is intentionally absent: state -> colour is the front end's job.
