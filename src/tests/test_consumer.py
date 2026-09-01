@@ -41,10 +41,29 @@ class Config:
     enabled_plugins = set()
 
 
-def _consumer(pipeline=None):
+class FakeCore:
+    def __init__(self, pending=None, fail=False):
+        self._pending = pending or {}
+        self.acks = []
+        self.fail = fail
+
+    def list_pending_erasures(self, participant, limit=0, tenant=None, all_tenants=True):
+        assert all_tenants, "the sweep must ask for all tenants"
+        return [{**it, "tenant": t} for t, items in self._pending.items() for it in items]
+
+    def acknowledge_erasure(self, erasure_id, participant, complied=True, detail="",
+                            tenant=None):
+        if self.fail:
+            raise RuntimeError("core unreachable")
+        self.acks.append({"erasure_id": erasure_id, "participant": participant,
+                          "complied": complied, "detail": detail})
+        return "complete"
+
+
+def _consumer(pipeline=None, core=None):
     pipeline = pipeline or FakePipeline()
     c = EventConsumer(Config(), registry=object(),
-                      pipeline_factory=lambda tenant: pipeline)
+                      pipeline_factory=lambda tenant: pipeline, core=core)
     c._fake = pipeline
     return c
 
@@ -234,3 +253,110 @@ def test_governance_events_are_ignored_without_a_cache():
     # The worker often runs alone, with no API-side cache to evict.
     c = _consumer()
     assert c.handle(_event(type="acl.changed", file_uid="X")) is True
+
+
+# ── Erasure (PROPOSAL_accountability_record.md §5.4) ────────────────────────
+
+def test_erasure_removes_diff_children_and_acknowledges():
+    core = FakeCore()
+    c = _consumer(core=core)
+    assert c.handle(_event(type="file.erased", version="", erasure_id="e1")) is True
+    assert c._fake.deletes == ["F"]
+    assert len(core.acks) == 1
+    assert core.acks[0]["participant"] == "difference"
+    assert core.acks[0]["complied"] is True
+    # The detail says what happened AND that there is no local store — an
+    # auditor reading the record should not be left wondering what else this
+    # service might still be holding.
+    assert "no local store" in core.acks[0]["detail"]
+
+
+def test_a_soft_delete_is_not_acknowledged_as_an_erasure():
+    # file.deleted already cascades. It must not touch the erasure record.
+    core = FakeCore()
+    c = _consumer(core=core)
+    assert c.handle(_event(type="file.deleted", version="")) is True
+    assert core.acks == []
+
+
+def test_a_failed_cascade_is_reported_and_retried():
+    core = FakeCore()
+    pipe = FakePipeline()
+    def boom(file_uid):
+        raise RuntimeError("core unreachable")
+    pipe.cascade_delete = boom
+    c = _consumer(pipe, core=core)
+
+    # False = redeliver. A core that was briefly unreachable is exactly the case
+    # redelivery fixes, and the erasure stays outstanding meanwhile.
+    assert c.handle(_event(type="file.erased", version="", erasure_id="e1")) is False
+    assert core.acks and core.acks[0]["complied"] is False
+
+
+def test_a_lost_acknowledgement_still_acks_the_event():
+    # The removal happened; re-processing it would just repeat a no-op, and the
+    # sweep re-offers the erasure until an acknowledgement lands.
+    core = FakeCore(fail=True)
+    c = _consumer(core=core)
+    assert c.handle(_event(type="file.erased", version="", erasure_id="e1")) is True
+    assert c._fake.deletes == ["F"]
+
+
+def test_the_sweep_catches_what_the_event_bus_dropped():
+    core = FakeCore(pending={"default": [{"erasure_id": "e9", "uid": "U9",
+                                          "tenant": "default", "initiated_at": 1}]})
+    c = _consumer(core=core)
+    assert c.sweep_erasures([]) == 1
+    assert c._fake.deletes == ["U9"]
+    assert core.acks[0]["erasure_id"] == "e9"
+
+
+def test_without_a_core_client_the_children_are_still_removed():
+    c = _consumer(core=None)
+    assert c.handle(_event(type="file.erased", version="", erasure_id="e1")) is True
+    assert c._fake.deletes == ["F"]
+
+
+def test_the_erasure_sweeper_thread_actually_runs():
+    """The sweeper runs in a daemon thread, so nothing else here executes its body.
+
+    That is how a missing `import time` shipped: the module parsed, every test
+    passed, and the thread would have died on its first tick with a NameError
+    nobody would see until an erasure went unacknowledged. This drives one
+    iteration directly.
+    """
+    import threading
+    core = FakeCore(pending={"default": [{"erasure_id": "e1", "uid": "U1",
+                                          "tenant": "default", "initiated_at": 1}]})
+    c = _consumer(core=core)
+
+    started = []
+    real = threading.Thread
+
+    class RunOnce(real):
+        def start(self):                      # run the body inline, once
+            started.append(self.name)
+            try:
+                # The loop is infinite; stop it after the first sleep.
+                import difference_service.consumer as mod
+                orig = mod.time.sleep
+                def stop(_s):
+                    mod.time.sleep = orig
+                    raise KeyboardInterrupt
+                mod.time.sleep = stop
+                try:
+                    self._target()
+                except KeyboardInterrupt:
+                    pass
+            finally:
+                mod = None
+
+    threading.Thread = RunOnce
+    try:
+        c._start_erasure_sweeper()
+    finally:
+        threading.Thread = real
+
+    assert started, "the sweeper thread was started"
+    assert core.acks and core.acks[0]["erasure_id"] == "e1", \
+        "one sweep iteration ran and acknowledged"
