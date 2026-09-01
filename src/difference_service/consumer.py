@@ -46,7 +46,12 @@ from .plugins.registry import default_registry
 log = logging.getLogger("difference_service.consumer")
 
 #: Event types the worker acts on. Everything else is acked untouched.
-HANDLED = ("file.updated", "file.deleted")
+HANDLED = ("file.updated", "file.deleted", "file.erased")
+
+# The name this service acknowledges erasures under; must match the core's
+# FILEENGINE_ERASURE_PARTICIPANTS entry or the core waits forever for an
+# acknowledgement filed under a name it is not looking for.
+ERASURE_PARTICIPANT = "difference"
 
 #: Governance events that invalidate cached READ decisions (§2, M4). They change
 #: *effective* access, so a cached "allow" outlives the grant that justified it
@@ -64,8 +69,14 @@ class EventConsumer:
     """Dispatches recognized events to the diff pipeline."""
 
     def __init__(self, config: Config, registry=None, *, pipeline_factory=None,
-                 permissions=None):
+                 permissions=None, core=None):
         self.config = config
+        #: Optional core client, used only to acknowledge erasures. Optional so
+        #: existing constructions and tests need not grow a dependency they do
+        #: not use; without it an erasure is still honoured — the diff children
+        #: are removed — and simply goes unacknowledged, so the core keeps
+        #: offering it. Unacknowledged is visible; silently-uncomplied is not.
+        self.core = core
         #: Optional PermissionGate to evict on governance events. The worker and
         #: the API share one in a combined process; when the worker runs alone
         #: there is no cache to evict and this stays None.
@@ -95,6 +106,59 @@ class EventConsumer:
         if len(self._seen) > _SEEN_MAX:
             self._seen.popitem(last=False)
         return False
+
+    # ---------------------------------------------------------------- erasure
+    def _honour_erasure(self, tenant: str, pipe, file_uid: str, erasure_id: str) -> bool:
+        """Remove any diff children and acknowledge. Returns whether to ack the event."""
+        try:
+            removed = pipe.cascade_delete(file_uid)
+        except Exception as e:            # noqa: BLE001 — the reason must reach the record
+            log.exception("erasure %s: could not remove diff children of %s",
+                          erasure_id or "(event)", file_uid)
+            self._acknowledge(tenant, erasure_id, False, f"cascade failed: {e}")
+            # Retryable: a core that was briefly unreachable is exactly the case
+            # redelivery fixes, and the erasure stays outstanding meanwhile.
+            return False
+        log.info("erased diff children for %s (removed=%s)", file_uid, removed)
+        self._acknowledge(tenant, erasure_id, True,
+                          f"removed {removed} diff rendition(s); no local store")
+        return True
+
+    def _acknowledge(self, tenant: str, erasure_id: str, complied: bool, detail: str) -> None:
+        core = getattr(self, "core", None)
+        if not erasure_id or core is None:
+            return
+        try:
+            state = core.acknowledge_erasure(erasure_id, ERASURE_PARTICIPANT,
+                                             complied=complied, detail=detail, tenant=tenant)
+            log.info("acknowledged erasure %s (complied=%s) -> %s", erasure_id, complied, state)
+        except Exception as e:            # noqa: BLE001
+            # The removal already happened. A lost ack delays completion, which is
+            # the safe direction; the sweep re-offers it.
+            log.warning("erasure %s honoured but ack failed: %s", erasure_id, e)
+
+    def sweep_erasures(self, tenants, limit: int = 100) -> int:
+        """The guarantee path (§5.4.5) — the event bus is fail-open by design."""
+        core = getattr(self, "core", None)
+        if core is None:
+            return 0
+        done = 0
+        for tenant in tenants:
+            try:
+                pending = core.list_pending_erasures(ERASURE_PARTICIPANT, limit=limit,
+                                                     tenant=tenant)
+            except Exception as e:        # noqa: BLE001
+                log.warning("erasure sweep: could not list pending for %s: %s", tenant, e)
+                continue
+            for item in pending:
+                try:
+                    pipe = self.pipeline(tenant)
+                except Exception:         # noqa: BLE001
+                    log.exception("erasure sweep: no pipeline for %s", tenant)
+                    continue
+                if self._honour_erasure(tenant, pipe, item["uid"], item["erasure_id"]):
+                    done += 1
+        return done
 
     # --------------------------------------------------------------- dispatch
     def handle(self, event: dict) -> bool:
@@ -142,6 +206,23 @@ class EventConsumer:
                 log.exception("cascade delete failed for %s", file_uid)
                 return False
             return True
+
+        if etype == "file.erased":
+            # This service keeps no database of its own: comparison manifests and
+            # diff renditions are children under the file's uid IN THE CORE, and
+            # the core's own erasure already destroys its rendition children. So
+            # the removal here is belt-and-braces (idempotent — a file whose
+            # children are already gone yields nothing), and the acknowledgement
+            # is the part that matters.
+            #
+            # No local tombstone, deliberately, and not from laziness: there is
+            # nowhere to put one, and nothing for it to guard. A diff needs two
+            # versions of a file and erasure destroys every version, so a late
+            # job cannot regenerate anything — the core has nothing left to
+            # compare. The other consumers need tombstones because they hold
+            # their own copies of the content; this one does not.
+            return self._honour_erasure(tenant, pipe, file_uid,
+                                        event.get("erasure_id", ""))
 
         # file.updated
         target = event.get("version") or ""
