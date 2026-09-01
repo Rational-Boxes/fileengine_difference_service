@@ -87,6 +87,11 @@ class Config:
         # --- Tenant + this service's own worker principal (§2) ---
         # Used ONLY by the background worker (event-driven precompute). On-demand
         # requests run as the calling user so core ACLs gate them directly.
+        # Erasure guarantee path (§5.4.5) — see the consumer. Tenants are explicit
+        # because this service has no authoritative view of the tenant set.
+        self.erasure_sweep_interval_s = int(_env("DIFF_ERASURE_SWEEP_INTERVAL_S", "60"))
+        self.erasure_sweep_tenants = _env("DIFF_ERASURE_SWEEP_TENANTS", "")
+
         self.tenant = _env("FILEENGINE_DIFF_TENANT", "default")
         self.agent_user = _first("FILEENGINE_DIFF_USER", "FILEENGINE_LDAP_USER", "")
         self.agent_password = _first("FILEENGINE_DIFF_PASSWORD", "FILEENGINE_LDAP_PASSWORD", "")

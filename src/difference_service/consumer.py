@@ -35,6 +35,7 @@ pipeline's manifest check collapses it to a cache hit.
 from __future__ import annotations
 
 import logging
+import time
 from collections import OrderedDict
 
 from .config import Config, load_dotenv
@@ -160,6 +161,37 @@ class EventConsumer:
                     done += 1
         return done
 
+    def _start_erasure_sweeper(self) -> None:
+        """Poll for erasures we owe, forever, in a daemon thread. Never fatal.
+
+        getattr rather than self.core: run_forever is exercised against
+        minimally-constructed consumers in the tests, and the sweeper is an
+        addition to the loop rather than a precondition for it.
+        """
+        if getattr(self, "core", None) is None:
+            log.warning("erasure sweeper not started: no core client")
+            return
+        import threading
+
+        interval = int(getattr(self.config, "erasure_sweep_interval_s", 60) or 60)
+        raw = getattr(self.config, "erasure_sweep_tenants", "") or ""
+        tenants = [t.strip() for t in raw.split(",") if t.strip()] or \
+                  [getattr(self.config, "tenant", "default") or "default"]
+
+        def loop() -> None:
+            while True:
+                try:
+                    done = self.sweep_erasures(tenants)
+                    if done:
+                        log.info("erasure sweep honoured %d outstanding erasure(s)", done)
+                except Exception:
+                    log.exception("erasure sweep failed; retrying next tick")
+                time.sleep(interval)
+
+        threading.Thread(target=loop, name="erasure-sweep", daemon=True).start()
+        log.info("erasure sweeper started (every %ss, tenants=%s, participant=%s)",
+                 interval, ",".join(tenants), ERASURE_PARTICIPANT)
+
     # --------------------------------------------------------------- dispatch
     def handle(self, event: dict) -> bool:
         """Process one event. Returns ``True`` if the entry may be acked.
@@ -283,6 +315,9 @@ class EventConsumer:
         source.ensure_group()
         log.info("difference_service consumer started (stream=%s group=%s consumer=%s)",
                  source.stream, source.group, source.consumer)
+        # The erasure guarantee path (§5.4.5), on a timer beside the event loop:
+        # the triggering event is fail-open and drop-oldest by design.
+        self._start_erasure_sweeper()
         try:
             while True:
                 for msg_id, event in source.read(count=16, block_ms=5000):
@@ -305,7 +340,17 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     load_dotenv()
     config = Config()
-    consumer = EventConsumer(config)
+    # A core client, so erasures can actually be ACKNOWLEDGED. Without one the
+    # diff children are still removed but the core is never told, so every
+    # erasure this service participates in stays outstanding for ever.
+    try:
+        from .core_client import agent_client
+        core = agent_client(config)
+    except Exception:               # noqa: BLE001
+        core = None
+        log.warning("no core client: erasures will be honoured but not acknowledged",
+                    exc_info=True)
+    consumer = EventConsumer(config, core=core)
     source = RedisEventSource(config, config.consumer_name)
     consumer.run_forever(source)
 

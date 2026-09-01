@@ -314,3 +314,48 @@ def test_without_a_core_client_the_children_are_still_removed():
     c = _consumer(core=None)
     assert c.handle(_event(type="file.erased", version="", erasure_id="e1")) is True
     assert c._fake.deletes == ["F"]
+
+
+def test_the_erasure_sweeper_thread_actually_runs():
+    """The sweeper runs in a daemon thread, so nothing else here executes its body.
+
+    That is how a missing `import time` shipped: the module parsed, every test
+    passed, and the thread would have died on its first tick with a NameError
+    nobody would see until an erasure went unacknowledged. This drives one
+    iteration directly.
+    """
+    import threading
+    core = FakeCore(pending={"default": [{"erasure_id": "e1", "uid": "U1",
+                                          "tenant": "default", "initiated_at": 1}]})
+    c = _consumer(core=core)
+
+    started = []
+    real = threading.Thread
+
+    class RunOnce(real):
+        def start(self):                      # run the body inline, once
+            started.append(self.name)
+            try:
+                # The loop is infinite; stop it after the first sleep.
+                import difference_service.consumer as mod
+                orig = mod.time.sleep
+                def stop(_s):
+                    mod.time.sleep = orig
+                    raise KeyboardInterrupt
+                mod.time.sleep = stop
+                try:
+                    self._target()
+                except KeyboardInterrupt:
+                    pass
+            finally:
+                mod = None
+
+    threading.Thread = RunOnce
+    try:
+        c._start_erasure_sweeper()
+    finally:
+        threading.Thread = real
+
+    assert started, "the sweeper thread was started"
+    assert core.acks and core.acks[0]["erasure_id"] == "e1", \
+        "one sweep iteration ran and acknowledged"
