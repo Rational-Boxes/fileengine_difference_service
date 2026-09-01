@@ -143,22 +143,31 @@ class EventConsumer:
         core = getattr(self, "core", None)
         if core is None:
             return 0
+        # ONE call, across every tenant. This service holds no local data, so it
+        # has no way at all to know which tenants it owes — it was guessing from
+        # config, defaulting to `default`, and an erasure anywhere else sat
+        # unacknowledged for ever. The core is the authority.
+        try:
+            pending = core.list_pending_erasures(ERASURE_PARTICIPANT, limit=limit,
+                                                 all_tenants=True)
+        except Exception as e:            # noqa: BLE001
+            log.warning("erasure sweep: could not list pending erasures: %s", e)
+            return 0
+
+        wanted = set(tenants or [])
         done = 0
-        for tenant in tenants:
-            try:
-                pending = core.list_pending_erasures(ERASURE_PARTICIPANT, limit=limit,
-                                                     tenant=tenant)
-            except Exception as e:        # noqa: BLE001
-                log.warning("erasure sweep: could not list pending for %s: %s", tenant, e)
+        for item in pending:
+            # The tenant the ROW carries, never a fixed one.
+            tenant = item.get("tenant") or "default"
+            if wanted and tenant not in wanted:
                 continue
-            for item in pending:
-                try:
-                    pipe = self.pipeline(tenant)
-                except Exception:         # noqa: BLE001
-                    log.exception("erasure sweep: no pipeline for %s", tenant)
-                    continue
-                if self._honour_erasure(tenant, pipe, item["uid"], item["erasure_id"]):
-                    done += 1
+            try:
+                pipe = self.pipeline(tenant)
+            except Exception:             # noqa: BLE001
+                log.exception("erasure sweep: no pipeline for %s", tenant)
+                continue
+            if self._honour_erasure(tenant, pipe, item["uid"], item["erasure_id"]):
+                done += 1
         return done
 
     def _start_erasure_sweeper(self) -> None:
@@ -174,14 +183,13 @@ class EventConsumer:
         import threading
 
         interval = int(getattr(self.config, "erasure_sweep_interval_s", 60) or 60)
-        raw = getattr(self.config, "erasure_sweep_tenants", "") or ""
-        tenants = [t.strip() for t in raw.split(",") if t.strip()] or \
-                  [getattr(self.config, "tenant", "default") or "default"]
+        # No tenant list: the core enumerates them. An optional narrowing list
+        # stays available on sweep_erasures for callers that want one.
 
         def loop() -> None:
             while True:
                 try:
-                    done = self.sweep_erasures(tenants)
+                    done = self.sweep_erasures([])
                     if done:
                         log.info("erasure sweep honoured %d outstanding erasure(s)", done)
                 except Exception:
@@ -189,8 +197,8 @@ class EventConsumer:
                 time.sleep(interval)
 
         threading.Thread(target=loop, name="erasure-sweep", daemon=True).start()
-        log.info("erasure sweeper started (every %ss, tenants=%s, participant=%s)",
-                 interval, ",".join(tenants), ERASURE_PARTICIPANT)
+        log.info("erasure sweeper started (every %ss, all tenants, participant=%s)",
+                 interval, ERASURE_PARTICIPANT)
 
     # --------------------------------------------------------------- dispatch
     def handle(self, event: dict) -> bool:

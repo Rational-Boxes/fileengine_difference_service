@@ -47,8 +47,9 @@ class FakeCore:
         self.acks = []
         self.fail = fail
 
-    def list_pending_erasures(self, participant, limit=0, tenant=None):
-        return list(self._pending.get(tenant, []))
+    def list_pending_erasures(self, participant, limit=0, tenant=None, all_tenants=True):
+        assert all_tenants, "the sweep must ask for all tenants"
+        return [{**it, "tenant": t} for t, items in self._pending.items() for it in items]
 
     def acknowledge_erasure(self, erasure_id, participant, complied=True, detail="",
                             tenant=None):
@@ -305,7 +306,7 @@ def test_the_sweep_catches_what_the_event_bus_dropped():
     core = FakeCore(pending={"default": [{"erasure_id": "e9", "uid": "U9",
                                           "tenant": "default", "initiated_at": 1}]})
     c = _consumer(core=core)
-    assert c.sweep_erasures(["default"]) == 1
+    assert c.sweep_erasures([]) == 1
     assert c._fake.deletes == ["U9"]
     assert core.acks[0]["erasure_id"] == "e9"
 
