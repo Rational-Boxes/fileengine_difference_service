@@ -315,3 +315,70 @@ def test_image_only_pages_score_zero_confidence():
     delta = _match(F.scanned_pair())
     assert delta.confidence == 0.0
     assert not delta.trustworthy
+
+
+# ------------------------------------------------- SVG geometry conversion
+# The path emitter has to read the OPERATORS, not just the points: both failures
+# below produce a page that renders, looks plausible, and is wrong.
+
+def _obj(points, ops):
+    from difference_service.plugins.pdf_objects import PageObject
+    return PageObject(kind="path", signature="s", points=points, ops=ops)
+
+
+def test_each_subpath_starts_a_new_svg_subpath():
+    """A path holding two subpaths must not be drawn as one polyline — that line
+    from the end of one shape to the start of the next is a mark nobody drew."""
+    from difference_service.plugins.pdf_svg import _path_d
+    d = _path_d(_obj([(0, 0), (10, 0), (50, 50), (60, 50)],
+                     ["m", "l", "m", "l", "S"]))
+    assert d.count("M") == 2
+    assert d == "M0,0 L10,0 M50,50 L60,50"
+
+
+def test_a_bezier_is_emitted_as_a_curve_not_through_its_control_points():
+    """`c` carries two control points that are NOT on the curve. Joining them with
+    L is what turned every circle into a polygon and every door swing into a
+    chord, and it bulges the shape out toward the control polygon."""
+    from difference_service.plugins.pdf_svg import _path_d
+    d = _path_d(_obj([(0, 0), (0, 10), (10, 20), (20, 20)], ["m", "c", "S"]))
+    assert d == "M0,0 C0,10 10,20 20,20"
+    assert " L" not in d
+
+
+def test_v_and_y_curves_use_their_implied_control_points():
+    """PDF 32000-1 §8.5.2.2: `v` takes the CURRENT point as its first control,
+    `y` puts its second control on the endpoint."""
+    from difference_service.plugins.pdf_svg import _path_d
+    assert _path_d(_obj([(0, 0), (5, 9), (9, 9)], ["m", "v", "S"])) \
+        == "M0,0 C0,0 5,9 9,9"
+    assert _path_d(_obj([(0, 0), (1, 8), (9, 9)], ["m", "y", "S"])) \
+        == "M0,0 C1,8 9,9 9,9"
+
+
+def test_a_rectangle_closes_itself_and_does_not_absorb_what_follows():
+    from difference_service.plugins.pdf_svg import _path_d
+    d = _path_d(_obj([(0, 0), (4, 0), (4, 3), (0, 3), (9, 9), (9, 0)],
+                     ["re", "m", "l", "S"]))
+    assert d == "M0,0 L4,0 L4,3 L0,3 Z M9,9 L9,0"
+
+
+def test_unaccountable_operators_fall_back_to_the_polyline():
+    """If the operator record does not tally with the points captured, walking the
+    two in step would misplace geometry. Coarse beats wrong."""
+    from difference_service.plugins.pdf_svg import _path_d
+    d = _path_d(_obj([(0, 0), (1, 1), (2, 2)], ["m", "S"]))   # 3 points, 1 op's worth
+    assert d == "M0,0 L1,1 L2,2"
+
+
+def test_a_word_gap_expressed_as_kerning_becomes_a_space():
+    """Producers that position every glyph individually express the SPACES as TJ
+    displacements too. Discarding all of them ran the words together, in the text
+    the matcher signs as well as on the rendered page."""
+    from difference_service.plugins.pdf_objects import _show_text
+    wide = [b"Living", -754, b"room"]        # the gap this producer writes
+    tight = [b"G", -77, b"a", -77, b"r"]     # ordinary letter kerning
+    assert _show_text([wide], "TJ") == "Living room"
+    assert _show_text([tight], "TJ") == "Gar"
+    # A space already in the string is not doubled by an adjacent displacement.
+    assert _show_text([[b"a ", -754, b"b"]], "TJ") == "a b"

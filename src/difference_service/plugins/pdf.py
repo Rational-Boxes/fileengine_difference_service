@@ -84,7 +84,12 @@ class PdfDiffPlugin(DiffPlugin):
     #: coverage fell below MIN_CONFIDENCE, and the page degraded to raster no
     #: matter how vector it was. Same reasoning as the bump above: those diffs are
     #: complete and cacheable, so nothing but a version bump rebuilds them.
-    version = 3
+    #: 4: the SVG conversion drew what the points said rather than what the
+    #: operators meant — subpaths joined corner to corner, and Bézier control
+    #: points connected with straight lines, so circles came out as polygons and
+    #: door swings as chords. Text lost its word gaps in the same release, since
+    #: this producer expresses them as TJ displacements and those were discarded.
+    version = 4
 
     MIMES = ("application/pdf", "application/x-pdf")
 

@@ -30,6 +30,7 @@ Both corpora are registered as ``REAL_DOCUMENTS`` in their fixture modules, so
 they flow into ``samples/`` and the manual-verification pass like everything
 else — a real document is a fixture here, not a special case.
 """
+import re
 from collections import Counter
 
 import pytest
@@ -110,6 +111,32 @@ def _ref(data: bytes, version: str, mime: str = "application/pdf",
          name: str = "house-blueprint.pdf"):
     from difference_service.plugins.base import SourceRef
     return SourceRef(uid=name, version=version, data=data, mime=mime, name=name)
+
+
+def test_the_blueprint_svg_keeps_its_curves_and_subpaths():
+    """Rendered geometry, on the document that exposed the bug.
+
+    The drawing carries 138 cubic Bézier operators and 41 multi-subpath objects,
+    so the SVG must contain curves and must break subpaths. Asserted on counts
+    because a conversion that flattened both still produced a valid, plausible
+    page — nothing about the output said it was wrong."""
+    before, after = F.blueprint_pair()
+    result = PdfDiffPlugin().diff(_ref(before, "old"), _ref(after, "new"))
+    svg = result.children[0].data.decode()
+    geometry = " ".join(re.findall(r' d="([^"]*)"', svg))
+    assert "C" in geometry, "no curve survived the conversion"
+    # Every drawn subpath opens with M; the single-polyline conversion emitted one
+    # per object, so this count sits far above the object count when subpaths hold.
+    assert geometry.count("M") > len(re.findall(r"<path", svg))
+
+
+def test_the_blueprint_keeps_its_word_gaps():
+    """The words on this sheet are separated by TJ displacements, not by space
+    glyphs — so dropping those ran them together everywhere text is used."""
+    page = parse_document(F.blueprint_pair()[1])[0]
+    words = {o.text for o in page.text_objects}
+    assert "Covered porch" in words and "Living room" in words
+    assert not any(w in words for w in ("Coveredporch", "Livingroom"))
 
 
 # ------------------------------------------------------------------------ 3D

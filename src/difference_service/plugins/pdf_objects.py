@@ -178,6 +178,13 @@ def image_signature(data: bytes, w: int, h: int) -> str:
 # ------------------------------------------------------------------ parsing
 
 _PATH_PAINT = {"S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"}
+
+#: A TJ displacement this large (thousandths of an em, so size-independent) is a
+#: word gap rather than kerning. Real documents separate the two by an order of
+#: magnitude — the drawing this was calibrated against kerns letters at 77 and
+#: spaces words at 600-754 — so anything from ~150 to ~500 gives the same answer;
+#: 200 (a fifth of an em) is the conventional cut, and no letter-spacing reaches it.
+_WORD_GAP_KERN = 200.0
 _TEXT_SHOW = {"Tj", "TJ", "'", '"'}
 
 #: Operators we knowingly ignore because they do not affect object identity or
@@ -398,7 +405,15 @@ def _show_text(operands, op) -> str:
         parts = []
         for el in operands[0]:
             if isinstance(el, (int, float)):
-                continue                      # kerning adjustment, not content
+                # A TJ number displaces the pen by -el/1000 of an em. Most are
+                # kerning, but a producer that positions every glyph individually
+                # expresses the SPACES this way too — there is no space glyph to
+                # find, just a bigger number. Dropping them all ran the words
+                # together ("Coveredporch"), in the extracted text and therefore
+                # in the signature the matcher compares as well as on the page.
+                if -float(el) >= _WORD_GAP_KERN and parts and not parts[-1].endswith(" "):
+                    parts.append(" ")
+                continue
             parts.append(dec(el))
         return "".join(parts)
     if op == '"' and len(operands) >= 3:
