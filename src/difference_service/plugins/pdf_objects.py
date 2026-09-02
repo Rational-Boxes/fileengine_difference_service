@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -122,15 +123,38 @@ class PageParse:
 
 # --------------------------------------------------------------- signatures
 
+#: The six-letter tag a producer prepends to the BaseFont name of a SUBSET
+#: embedded font ("WIQFBQ+LiberationMono"). PDF 32000-1 §9.6.4 requires it to be
+#: unique per subset, not stable across files — so re-exporting the same document
+#: yields a different tag for the same face, and any identity built on the raw
+#: name cannot survive a comparison between two separately produced PDFs.
+_SUBSET_TAG = re.compile(r"^[A-Z]{6}\+")
+
+
+def font_identity(font: str) -> str:
+    """The part of a font name that means the same thing in both documents.
+
+    Strips the subset tag, keeping the face. Everything that compares two versions
+    must go through this: the tag is per-export noise, and treating it as identity
+    is what made every text run on a page read as deleted-and-re-added."""
+    return _SUBSET_TAG.sub("", font or "")
+
+
 def text_signature(s: str, size: float, font: str) -> str:
-    """Identity of a text run: the string + a size bucket + the font resource.
+    """Identity of a text run: the string + a size bucket + the font FACE.
 
     Position is excluded on purpose. The *string* is the strongest identity signal
     a PDF offers for text, so an edited string yields a different signature and
     reads as delete+add rather than modify — which §5.1 leaves as a design choice.
     Keeping the string in the key is the safer half of that trade: it never claims
-    two different sentences are "the same text, modified"."""
-    return f"T|{font}|{_q(size, _SIZE_BUCKET)}|{s}"
+    two different sentences are "the same text, modified".
+
+    The font goes in as its FACE (see ``font_identity``), never the raw BaseFont
+    name: a subset tag differs between any two exports, so including it made the
+    same word in the same font at the same size a different object in every
+    comparison — which cost the page its whole text layer and, with it, the
+    coverage the vector tier is gated on."""
+    return f"T|{font_identity(font)}|{_q(size, _SIZE_BUCKET)}|{s}"
 
 
 def path_signature(points: Sequence[Tuple[float, float]], ops: Sequence[str]) -> str:

@@ -71,7 +71,14 @@ class PdfDiffPlugin(DiffPlugin):
     #: document came out as a raster comparison. Those results are complete and
     #: cacheable — nothing marks them as degraded — so only a version bump gets
     #: them rebuilt as the vector diffs they should always have been.
-    version = 2
+    #:
+    #: 3: a text run's identity no longer carries the font's subset tag, which is
+    #: per-export noise. Under version 2, two separately produced PDFs shared no
+    #: text signature at all — every run on the page read as deleted plus added,
+    #: coverage fell below MIN_CONFIDENCE, and the page degraded to raster no
+    #: matter how vector it was. Same reasoning as the bump above: those diffs are
+    #: complete and cacheable, so nothing but a version bump rebuilds them.
+    version = 3
 
     MIMES = ("application/pdf", "application/x-pdf")
 

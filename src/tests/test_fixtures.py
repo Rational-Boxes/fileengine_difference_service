@@ -63,9 +63,26 @@ def _pdf_is_wellformed(data: bytes) -> bool:
 
 
 def test_pdf_fixtures_are_structurally_valid():
+    """Synthesised fixtures only — the plain-syntax shape this module writes.
+
+    Real producer output (pdf.REAL_DOCUMENTS) is exempt because it is allowed to
+    be a better PDF than the fixtures are: a compressed object stream keeps the
+    catalog out of the raw bytes. It gets the check that actually matters below."""
     for name, (build, _t) in pdf.PAIRS.items():
+        if name in pdf.REAL_DOCUMENTS:
+            continue
         for side in build():
             assert _pdf_is_wellformed(side), name
+
+
+def test_real_document_fixtures_open_and_have_pages():
+    pypdf = pytest.importorskip("pypdf", reason="pypdf not installed")
+    import io
+    for name in pdf.REAL_DOCUMENTS:
+        build, _truth = pdf.PAIRS[name]
+        for side, data in zip(("v1", "v2"), build()):
+            reader = pypdf.PdfReader(io.BytesIO(data))
+            assert len(reader.pages) >= 1, f"{name}/{side} has no pages"
 
 
 def test_pdf_xref_offsets_point_at_their_objects():

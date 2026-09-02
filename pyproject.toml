@@ -56,5 +56,10 @@ markers = [
     # Tests that need a running dev stack (gRPC core + LDAP). Deselected by
     # default: `pytest` is hermetic, `pytest -m live` exercises the real thing.
     "live: requires a live FileEngine core + LDAP (see README)",
+    # Real-document end-to-end runs (a mesh boolean on a real building model is
+    # ~11s). Deselected by default so `pytest` stays fast; `pytest -m slow` runs
+    # them, and CI should. Not skipped: the point of a real-document corpus is
+    # that something actually drives it.
+    "slow: exercises a real document end to end (seconds, not milliseconds)",
 ]
-addopts = "-m 'not live'"
+addopts = "-m 'not live and not slow'"

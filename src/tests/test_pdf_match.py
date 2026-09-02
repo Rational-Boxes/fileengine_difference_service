@@ -73,6 +73,42 @@ def test_a_scanned_page_yields_only_image_objects():
     assert page.is_image_only
 
 
+def test_a_resubset_export_matches_instead_of_rewriting_the_page():
+    """The regression this corpus could not see: the same page exported twice, with
+    a different font subset tag each time, is UNCHANGED — not 4 deletions and 4
+    additions. Keyed on the raw BaseFont name, every text run's identity changed
+    with the tag, coverage collapsed, and the page degraded to a raster diff."""
+    delta = _match(F.resubset_pair())
+    assert delta.matched == 4
+    assert [d.state for d in delta.deltas] == [DiffState.UNCHANGED] * 4
+    assert delta.confidence == 1.0 and delta.trustworthy
+
+
+def test_confidence_survives_a_subset_tag_change():
+    """The gate that actually decides the tier. Under the old identity this pair
+    scored 0.0 — the whole text layer unmatched — and any real drawing landed
+    below MIN_CONFIDENCE for a change nobody made."""
+    delta = _match(F.resubset_pair())
+    assert delta.confidence >= MIN_CONFIDENCE
+
+
+def test_font_identity_strips_only_the_subset_tag():
+    from difference_service.plugins.pdf_objects import font_identity, text_signature
+    assert font_identity("WIQFBQ+LiberationMono") == "LiberationMono"
+    assert font_identity("JVGTSX+LiberationMono") == "LiberationMono"
+    # A face is not a tag: nothing that fails the six-upper-letters+ shape is cut.
+    assert font_identity("LiberationMono") == "LiberationMono"
+    assert font_identity("Arial+Bold") == "Arial+Bold"
+    assert font_identity("ABC+Helvetica") == "ABC+Helvetica"
+    assert font_identity("") == ""
+    # And the signature the matcher keys on agrees across two exports.
+    assert (text_signature("Garage", 11.0, "WIQFBQ+LiberationMono")
+            == text_signature("Garage", 11.0, "JVGTSX+LiberationMono"))
+    # while still telling two different faces apart.
+    assert (text_signature("Garage", 11.0, "WIQFBQ+LiberationMono")
+            != text_signature("Garage", 11.0, "WIQFBQ+LiberationSans"))
+
+
 def test_a_vector_page_is_not_flagged_raster():
     page = _pages(F.unchanged_pair()[0])[0]
     assert not page.has_raster and not page.is_image_only
