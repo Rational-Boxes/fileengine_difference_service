@@ -36,14 +36,21 @@ trap.
 """
 from __future__ import annotations
 
+import os
 from typing import List, Tuple
 
 # A4-ish page box used by every fixture.
 PAGE_W, PAGE_H = 595, 842
 
 
-def _pdf(pages: List[bytes], *, extra_objects: List[bytes] = None) -> bytes:
+def _pdf(pages: List[bytes], *, extra_objects: List[bytes] = None,
+         base_font: bytes = b"/Helvetica") -> bytes:
     """Assemble complete PDF bytes from per-page content streams.
+
+    ``base_font`` exists so a fixture can be an EMBEDDED SUBSET
+    (``/WIQFBQ+LiberationMono``) and not only a base-14 face. Every pair here used
+    the non-embedded ``/Helvetica`` default, which carries no subset tag — the one
+    shape of document that could not expose the tag as a matching hazard.
 
     Writes a correct xref table because a real parser will be pointed at these;
     a fixture that only *looks* like a PDF would fail for reasons unrelated to
@@ -68,7 +75,7 @@ def _pdf(pages: List[bytes], *, extra_objects: List[bytes] = None) -> bytes:
             % (PAGE_W, PAGE_H, font_id, content_ids[i]))
         objects.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
 
-    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont " + base_font + b" >>")
     objects.extend(extra_objects)
 
     out = bytearray(b"%PDF-1.4\n")
@@ -120,6 +127,44 @@ def unchanged_pair() -> Tuple[bytes, bytes]:
     signatures reports spurious modifications here even though nothing moved."""
     page = text(72, 760, "Structural Report") + rect(72, 600, 200, 100) + line(72, 560, 500, 560)
     return _pdf([page]), _pdf([page])
+
+
+def blueprint_pair() -> Tuple[bytes, bytes]:
+    """A REAL pair: a house blueprint and its revision, as a CAD tool exported them.
+
+    Everything else in this module is synthesised, which is what let a whole class
+    of failure through — the synthetic pages use non-embedded /Helvetica, while a
+    real producer embeds a font SUBSET and stamps it with a fresh six-letter tag on
+    every export. Keyed on the raw font name, this pair matched 137 of 386 objects
+    (confidence 0.35, below MIN_CONFIDENCE) and a fully vector drawing came out as
+    a raster comparison; the synthetic corpus could not see it.
+
+    Ground truth: the drawing is revised, not redrawn. Its text layer is the SAME
+    text in the same face, so the pages must match on the strength of it — see
+    ``tests/test_pdf_real_documents.py``."""
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "documents", "blueprint")
+    with open(os.path.join(here, "v1.pdf"), "rb") as fh:
+        before = fh.read()
+    with open(os.path.join(here, "v2.pdf"), "rb") as fh:
+        after = fh.read()
+    return before, after
+
+
+def resubset_pair() -> Tuple[bytes, bytes]:
+    """The SAME page, exported twice, with a different font subset tag each time.
+
+    Ground truth: every object *unchanged*. This is not a contrived case — a
+    producer assigns the six-letter tag per subset (PDF 32000-1 §9.6.4), so any
+    document re-exported from its source gets a new one for the same face, and
+    real PDFs (LaTeX, Word, Illustrator, CAD) embed subsets as a matter of course.
+
+    Every other pair here uses non-embedded ``/Helvetica``, which has no tag at
+    all — which is exactly why a matcher keyed on the raw font name passed the
+    whole corpus while matching zero text on real documents."""
+    page = (text(72, 760, "Structural Report") + text(72, 730, "Sheet A-101")
+            + rect(72, 600, 200, 100) + line(72, 560, 500, 560))
+    return (_pdf([page], base_font=b"/WIQFBQ+LiberationMono"),
+            _pdf([page], base_font=b"/JVGTSX+LiberationMono"))
 
 
 def added_object_pair() -> Tuple[bytes, bytes]:
@@ -289,4 +334,15 @@ PAIRS = {
     "reordered_page": (reordered_page_pair, "pages swapped; content unchanged"),
     "mixed_tier": (mixed_tier_pair, "vector page + scanned page => mode 'mixed'"),
     "scanned": (scanned_pair, "image-only; raster tier, changed region"),
+    "resubset": (resubset_pair, "same page re-exported; new font subset tag; nothing changed"),
+    "blueprint": (blueprint_pair, "REAL CAD export + revision; must diff as vector, not raster"),
 }
+
+#: Pairs whose bytes this module did NOT write — real producer output, checked in
+#: under ``documents/``. They are held to what a PDF must actually be (it opens,
+#: it has pages) rather than to the plain-syntax shape the synthesised fixtures
+#: are built with: a real file compresses its catalog into an object stream, so
+#: "/Type /Catalog" does not appear in its bytes at all. Distinguishing them is
+#: the point of having them — a corpus that only contains what it synthesised can
+#: only test what its author already thought of.
+REAL_DOCUMENTS = {"blueprint"}

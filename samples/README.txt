@@ -50,6 +50,8 @@ ALL SAMPLES
   pdf-reordered_page.pdf             pages swapped; content unchanged
   pdf-mixed_tier.pdf                 vector page + scanned page => mode 'mixed'
   pdf-scanned.pdf                    image-only; raster tier, changed region
+  pdf-resubset.pdf                   same page re-exported; new font subset tag; nothing changed
+  pdf-blueprint.pdf                  REAL CAD export + revision; must diff as vector, not raster
   ifc-unchanged.ifc                  nothing changed
   ifc-added_element.ifc              WALL_C added
   ifc-deleted_element.ifc            WALL_C deleted
@@ -66,6 +68,7 @@ ALL SAMPLES
   gltf-scaled_mesh.glb               scaled => partial overlap, shell is the delta
   gltf-renamed_node.glb              name changed only; nothing changed
   gltf-reordered_nodes.glb           node order differs; nothing changed
+  gltf-building.glb                  REAL Blender export + revision; mostly corresponding
   cad-unchanged.step                 same solid; tessellation must be deterministic
   cad-resized_solid.step             dimensions changed => volume delta
   cad-moved_solid.step               translated => removed + added volume

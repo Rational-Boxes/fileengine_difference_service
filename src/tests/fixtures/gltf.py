@@ -32,6 +32,7 @@ with its buffer embedded, rather than a JSON file plus sidecars.
 from __future__ import annotations
 
 import json
+import os
 import struct
 from typing import List, Tuple
 
@@ -173,6 +174,26 @@ def reordered_nodes_pair() -> Tuple[bytes, bytes]:
 
 
 #: Every pair, keyed by name, with its ground truth.
+def building_pair() -> Tuple[bytes, bytes]:
+    """A REAL pair: a building model and its revision, exported from Blender.
+
+    Everything else here is synthesised — a handful of boxes written by this
+    module, which is precise but only ever contains what its author thought to
+    put in. A real export brings what a real exporter emits: hundreds of nodes,
+    materials, normals and UVs, meshes split by material, and node names an
+    exporter rewrote — against which "correspondence inferred from geometry" is a
+    claim with something at stake.
+
+    Ground truth: the building is REVISED, not rebuilt (319 elements -> 381), so
+    most of it must correspond; see ``tests/test_real_documents.py``."""
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "documents", "blender")
+    with open(os.path.join(here, "v1.glb"), "rb") as fh:
+        before = fh.read()
+    with open(os.path.join(here, "v2.glb"), "rb") as fh:
+        after = fh.read()
+    return before, after
+
+
 PAIRS = {
     "unchanged": (unchanged_pair, "nothing changed; empty difference volume"),
     "added_mesh": (added_mesh_pair, "one mesh added"),
@@ -181,4 +202,8 @@ PAIRS = {
     "scaled_mesh": (scaled_mesh_pair, "scaled => partial overlap, shell is the delta"),
     "renamed_node": (renamed_node_pair, "name changed only; nothing changed"),
     "reordered_nodes": (reordered_nodes_pair, "node order differs; nothing changed"),
+    "building": (building_pair, "REAL Blender export + revision; mostly corresponding"),
 }
+
+#: Pairs whose bytes this module did NOT write — see pdf.REAL_DOCUMENTS.
+REAL_DOCUMENTS = {"building"}

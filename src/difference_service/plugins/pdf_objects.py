@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -122,15 +123,38 @@ class PageParse:
 
 # --------------------------------------------------------------- signatures
 
+#: The six-letter tag a producer prepends to the BaseFont name of a SUBSET
+#: embedded font ("WIQFBQ+LiberationMono"). PDF 32000-1 §9.6.4 requires it to be
+#: unique per subset, not stable across files — so re-exporting the same document
+#: yields a different tag for the same face, and any identity built on the raw
+#: name cannot survive a comparison between two separately produced PDFs.
+_SUBSET_TAG = re.compile(r"^[A-Z]{6}\+")
+
+
+def font_identity(font: str) -> str:
+    """The part of a font name that means the same thing in both documents.
+
+    Strips the subset tag, keeping the face. Everything that compares two versions
+    must go through this: the tag is per-export noise, and treating it as identity
+    is what made every text run on a page read as deleted-and-re-added."""
+    return _SUBSET_TAG.sub("", font or "")
+
+
 def text_signature(s: str, size: float, font: str) -> str:
-    """Identity of a text run: the string + a size bucket + the font resource.
+    """Identity of a text run: the string + a size bucket + the font FACE.
 
     Position is excluded on purpose. The *string* is the strongest identity signal
     a PDF offers for text, so an edited string yields a different signature and
     reads as delete+add rather than modify — which §5.1 leaves as a design choice.
     Keeping the string in the key is the safer half of that trade: it never claims
-    two different sentences are "the same text, modified"."""
-    return f"T|{font}|{_q(size, _SIZE_BUCKET)}|{s}"
+    two different sentences are "the same text, modified".
+
+    The font goes in as its FACE (see ``font_identity``), never the raw BaseFont
+    name: a subset tag differs between any two exports, so including it made the
+    same word in the same font at the same size a different object in every
+    comparison — which cost the page its whole text layer and, with it, the
+    coverage the vector tier is gated on."""
+    return f"T|{font_identity(font)}|{_q(size, _SIZE_BUCKET)}|{s}"
 
 
 def path_signature(points: Sequence[Tuple[float, float]], ops: Sequence[str]) -> str:
@@ -154,6 +178,13 @@ def image_signature(data: bytes, w: int, h: int) -> str:
 # ------------------------------------------------------------------ parsing
 
 _PATH_PAINT = {"S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"}
+
+#: A TJ displacement this large (thousandths of an em, so size-independent) is a
+#: word gap rather than kerning. Real documents separate the two by an order of
+#: magnitude — the drawing this was calibrated against kerns letters at 77 and
+#: spaces words at 600-754 — so anything from ~150 to ~500 gives the same answer;
+#: 200 (a fifth of an em) is the conventional cut, and no letter-spacing reaches it.
+_WORD_GAP_KERN = 200.0
 _TEXT_SHOW = {"Tj", "TJ", "'", '"'}
 
 #: Operators we knowingly ignore because they do not affect object identity or
@@ -374,7 +405,15 @@ def _show_text(operands, op) -> str:
         parts = []
         for el in operands[0]:
             if isinstance(el, (int, float)):
-                continue                      # kerning adjustment, not content
+                # A TJ number displaces the pen by -el/1000 of an em. Most are
+                # kerning, but a producer that positions every glyph individually
+                # expresses the SPACES this way too — there is no space glyph to
+                # find, just a bigger number. Dropping them all ran the words
+                # together ("Coveredporch"), in the extracted text and therefore
+                # in the signature the matcher compares as well as on the page.
+                if -float(el) >= _WORD_GAP_KERN and parts and not parts[-1].endswith(" "):
+                    parts.append(" ")
+                continue
             parts.append(dec(el))
         return "".join(parts)
     if op == '"' and len(operands) >= 3:

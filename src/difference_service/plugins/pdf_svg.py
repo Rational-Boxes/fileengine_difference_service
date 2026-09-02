@@ -55,15 +55,80 @@ def _fmt(v: float) -> str:
     return f"{v:.2f}".rstrip("0").rstrip(".") or "0"
 
 
-def _path_d(obj: PageObject) -> str:
-    """Path data for a vector object, from its captured points."""
-    if not obj.points:
-        return ""
-    d = [f"M{_fmt(obj.points[0][0])},{_fmt(obj.points[0][1])}"]
-    for x, y in obj.points[1:]:
-        d.append(f"L{_fmt(x)},{_fmt(y)}")
-    if "re" in obj.ops or "h" in obj.ops:
+#: How many captured points each geometry operator contributed, so the point list
+#: can be walked back in step with the operator list (pdf_objects records both).
+_POINTS_PER_OP = {"m": 1, "l": 1, "re": 4, "c": 3, "v": 2, "y": 2, "h": 0}
+
+
+def _polyline(points, close: bool) -> str:
+    """The lossy reading: every point joined in order. Kept as the fallback for a
+    path whose operators do not account for exactly the points captured, where
+    walking the two in step would misplace geometry rather than merely coarsen it."""
+    d = [f"M{_fmt(points[0][0])},{_fmt(points[0][1])}"]
+    d += [f"L{_fmt(x)},{_fmt(y)}" for x, y in points[1:]]
+    if close:
         d.append("Z")
+    return " ".join(d)
+
+
+def _path_d(obj: PageObject) -> str:
+    """Path data for a vector object, walking its points AND its operators.
+
+    Both are needed. The points alone are ambiguous in two ways that show up as
+    drawing errors rather than approximations:
+
+      * ``m`` starts a NEW subpath. Joining across it draws a line between two
+        shapes that were never connected — the stray corner-to-corner lines a
+        floor plan is full of, since a single path routinely holds many subpaths.
+      * ``c``/``v``/``y`` contribute CONTROL points, which are not on the curve.
+        Joining them with ``L`` turns every circle into a polygon, every door
+        swing into a chord, and bulges each shape out toward its control polygon.
+
+    So each operator consumes its own points and emits the SVG command that means
+    the same thing. ``re`` becomes its own closed subpath, and ``h`` closes the
+    subpath it ends rather than the whole element."""
+    pts = obj.points
+    if not pts:
+        return ""
+    ops = [o for o in obj.ops if o in _POINTS_PER_OP]
+    if sum(_POINTS_PER_OP[o] for o in ops) != len(pts):
+        return _polyline(pts, close="re" in obj.ops or "h" in obj.ops)
+
+    def xy(p):
+        return f"{_fmt(p[0])},{_fmt(p[1])}"
+
+    d: List[str] = []
+    cur = pts[0]
+    i = 0
+    for op in ops:
+        chunk = pts[i:i + _POINTS_PER_OP[op]]
+        i += _POINTS_PER_OP[op]
+        if op == "m":
+            d.append(f"M{xy(chunk[0])}")
+            cur = chunk[0]
+        elif op == "l":
+            d.append(f"L{xy(chunk[0])}" if d else f"M{xy(chunk[0])}")
+            cur = chunk[0]
+        elif op == "re":
+            a, b, c, e = chunk
+            d.append(f"M{xy(a)} L{xy(b)} L{xy(c)} L{xy(e)} Z")
+            cur = a
+        elif op == "c":
+            c1, c2, end = chunk
+            d.append(f"C{xy(c1)} {xy(c2)} {xy(end)}")
+            cur = end
+        elif op == "v":
+            # First control point is the CURRENT point (PDF 32000-1 §8.5.2.2).
+            c2, end = chunk
+            d.append(f"C{xy(cur)} {xy(c2)} {xy(end)}")
+            cur = end
+        elif op == "y":
+            # Second control point coincides with the endpoint.
+            c1, end = chunk
+            d.append(f"C{xy(c1)} {xy(end)} {xy(end)}")
+            cur = end
+        elif op == "h":
+            d.append("Z")
     return " ".join(d)
 
 
