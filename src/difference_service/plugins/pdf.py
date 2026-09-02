@@ -28,6 +28,12 @@ Each page independently takes the highest tier its content actually supports:
    disclaims. Needs a rasterizer backend; when none is installed the page is
    reported as failed rather than silently emitting an empty diff.
 
+Every step DOWN from tier 1 is logged at INFO with the reason, because the result
+of a degradation is a complete, cacheable, entirely reasonable-looking diff. When
+a vector drawing rasterizes there is nothing in the output to say so and nothing
+in the manifest that reads as wrong, so the log line is the only thing standing
+between a silent quality regression and a diagnosis.
+
 A document therefore commonly ends up ``mixed`` (§7.1), which is why the manifest
 carries a per-page map instead of one document-wide mode.
 
@@ -44,7 +50,7 @@ from .base import (
     DiffChild, DiffMode, DiffPlugin, DiffResult, DiffState, SourceRef,
 )
 from .pdf_glyphs import GlyphProvider
-from .pdf_match import PageDelta, match_page, pair_pages
+from .pdf_match import MIN_CONFIDENCE, PageDelta, match_page, pair_pages
 from .pdf_objects import PageParse, parse_document
 from .pdf_raster import default_rasterizer
 from .pdf_svg import render_page, render_raster_page, render_whole_page_state
@@ -139,23 +145,28 @@ class PdfDiffPlugin(DiffPlugin):
         old, new = old_pages[old_i], new_pages[new_i]
 
         # --- tier 1: vector object-level ---
-        if self._tier1_possible(old, new, glyphs):
+        if self._tier1_possible(old, new, glyphs, index):
             delta = match_page(old, new)
             if delta.trustworthy:
                 svg = render_page(delta, new.width, new.height, glyphs=glyphs,
                                   mode=DiffMode.VECTOR)
                 if svg is not None:
+                    log.debug("page %d: vector (confidence %.2f, %d/%d matched)",
+                              index, delta.confidence, delta.matched,
+                              min(len(old.objects), len(new.objects)))
                     return _svg_child(index, svg, DiffMode.VECTOR)
-                log.debug("page %d: outlines unavailable; degrading", index)
+                log.info("page %d -> raster: outlines unavailable at render", index)
             else:
-                log.debug("page %d: matcher confidence %.2f; degrading",
-                          index, delta.confidence)
+                log.info("page %d -> raster: matcher confidence %.2f below %.2f "
+                         "(%d of %d objects matched)", index, delta.confidence,
+                         MIN_CONFIDENCE, delta.matched,
+                         min(len(old.objects), len(new.objects)))
 
         # --- tiers 2/3: raster ---
         return self._raster_child(index, old, new, old_data, old_i, new_data, new_i)
 
     def _tier1_possible(self, old: PageParse, new: PageParse,
-                        glyphs: GlyphProvider) -> bool:
+                        glyphs: GlyphProvider, index: int = -1) -> bool:
         """Cheap pre-checks before doing the matching work.
 
         An image-only page has no object identity at all (§5.2's argument applies
@@ -163,12 +174,18 @@ class PdfDiffPlugin(DiffPlugin):
         no-client-fonts contract — in both cases tier 1 is not merely lower quality,
         it is unavailable."""
         if old.is_image_only or new.is_image_only:
+            log.info("page %d -> raster: image-only page (old=%s new=%s)",
+                     index, old.is_image_only, new.is_image_only)
             return False
         if not old.objects and not new.objects:
+            log.info("page %d -> raster: no objects parsed on either side", index)
             return False
-        for page in (old, new):
+        for page, side in ((old, "old"), (new, "new")):
             for obj in page.text_objects:
                 if not glyphs.available(obj.font):
+                    log.info("page %d -> raster: no glyph outlines for font %r (%s "
+                             "side); install the substitute font packages",
+                             index, obj.font, side)
                     return False
         return True
 
