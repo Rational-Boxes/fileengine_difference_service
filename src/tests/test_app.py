@@ -45,11 +45,14 @@ def client():
     return c
 
 
-def _auth(client, user="alice", roles=("users",)):
+def _auth(client, user="alice", roles=("users",), tenant="default"):
     """Issue a bearer token directly — the LDAP bind itself is covered by the
-    @live harness; these tests exercise the surface, not the directory."""
+    @live harness; these tests exercise the surface, not the directory.
+
+    ``tenant`` is the tenant the token is issued FOR, and the token is only
+    good for that one."""
     token = client.token_store.issue(
-        Identity(user=user, roles=list(roles), tenant="default", authenticated=True))
+        Identity(user=user, roles=list(roles), tenant=tenant, authenticated=True))
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -98,8 +101,20 @@ def test_auth_token_rejects_bad_credentials(client):
     assert "access_token" not in r.json()
 
 
-def test_x_tenant_header_scopes_the_identity(client):
-    headers = _auth(client)
+def test_x_tenant_header_cannot_rescope_a_token(client):
+    """A token is bound to the tenant it was issued for.
+
+    The header used to re-scope it: the identity kept the roles resolved at
+    issue time and simply wore the tenant that was asked for, which is a
+    cross-tenant grant (roles are per tenant). Membership is not a header.
+    """
+    headers = _auth(client)                       # issued for "default"
+    headers["X-Tenant"] = "acme"
+    assert client.get("/whoami", headers=headers).status_code == 401
+
+
+def test_a_token_serves_the_tenant_it_was_issued_for(client):
+    headers = _auth(client, tenant="acme")
     headers["X-Tenant"] = "acme"
     assert client.get("/whoami", headers=headers).json()["tenant"] == "acme"
 
